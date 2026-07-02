@@ -1,20 +1,3 @@
-"""
-cINN architecture for Hjj unfolding.
-
-Ported directly from the training notebook (section "7. Build cINN /
-conditional flow with FrEIA" — the name is stale, the implementation is
-pure PyTorch with no FrEIA dependency).
-
-Every class here is structurally identical to the notebook version, so a
-checkpoint trained there will load here with a plain `load_state_dict`.
-The only change is that hyperparameters (widths, depths, spline bins,
-number of blocks, dims) are passed in explicitly via a config dict
-instead of being read off module-level globals. This is what lets one
-codebase serve multiple model variants (e.g. the 66-dim/12-dim
-no-energy model and a future with-energy model) by swapping a YAML file
-instead of editing code.
-"""
-
 from __future__ import annotations
 
 import numpy as np
@@ -318,20 +301,23 @@ class cINN(nn.Module):
 # Config-driven builder
 # ──────────────────────────────────────────────────────────────────────────
 
-def build_model_from_config(config: dict, device: str = "cpu") -> cINN:
+def build_model_from_config(config: dict, target_dim: int, context_dim: int, device: str = "cpu") -> cINN:
     """
-    Build a cINN from a loaded YAML config (see configs/no_energy.yaml).
+    Build a cINN given explicit target_dim/context_dim and config["model"]'s
+    architecture hyperparameters.
 
-    Expects config["model"] to hold the architecture hyperparameters and
-    config["truth"]["dim"] / config["reco"]["dim"] for target_dim /
-    context_dim. This mirrors MODEL_CONFIG as saved in the training
-    checkpoint, so the same config also documents what a checkpoint was
-    trained with.
+    Dims are passed explicitly rather than read off config["truth"]["dim"] /
+    config["reco"]["dim"] because catalog-driven configs don't store a flat
+    "dim" key -- dims are computed via kinematics.total_dim against a
+    resolved catalog selection (see catalog.resolve_object,
+    preprocessing_training.resolve_config). Callers (train.py, inference.py)
+    compute these once and pass them in, so this function has no opinion
+    about where dims come from.
     """
     m = config["model"]
     model = cINN(
-        target_dim=config["truth"]["dim"],
-        context_dim=config["reco"]["dim"],
+        target_dim=target_dim,
+        context_dim=context_dim,
         n_blocks=m.get("n_blocks", 24),
         coupling=m.get("coupling", "rqs"),
         cond_width=m.get("cond_width", 512),
@@ -342,15 +328,3 @@ def build_model_from_config(config: dict, device: str = "cpu") -> cINN:
         affine_clamp=m.get("affine_clamp", 2.0),
     )
     return model.to(device)
-
-
-def load_checkpoint(model: cINN, checkpoint_path: str, device: str = "cpu") -> dict:
-    """
-    Load a training checkpoint's model_state_dict into `model` in place.
-    Returns the full checkpoint dict (epoch, val_loss, model_config, ...)
-    in case the caller wants to inspect / sanity-check it.
-    """
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.eval()
-    return checkpoint

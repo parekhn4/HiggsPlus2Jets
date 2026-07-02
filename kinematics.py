@@ -65,8 +65,6 @@ def photons_to_higgs(pt1, eta1, phi1, e1, pt2, eta2, phi2, e2):
     mass = np.sqrt(np.maximum(e ** 2 - px ** 2 - py ** 2 - pz ** 2, 0.0))
     return pt, eta, phi, mass, e
 
-# kinematics.py — add anywhere in the file, e.g. right after photons_to_higgs
-
 def compute_swap_mask(p_pt: np.ndarray, p_eta: np.ndarray, ordering: str) -> np.ndarray:
     """
     True where slot 0 and slot 1 need swapping so that j1 ends up first,
@@ -143,3 +141,116 @@ def reconstruct_event(samples: np.ndarray, truth_config: dict) -> dict:
         )
 
     return four_vectors
+
+def total_dim(resolved_domain: dict, max_jets: int | None = None) -> int:
+    """
+    Sum of every object's + the event block's dim, in config order.
+    "jet" is a repeated object (up to max_jets copies in the actual
+    array), so its contribution is multiplied accordingly -- everything
+    else appears exactly once.
+    """
+    dim = 0
+    for name, obj in resolved_domain["objects"].items():
+        multiplier = max_jets if (name == "jet" and max_jets is not None) else 1
+        dim += obj["dim"] * multiplier
+    if "event" in resolved_domain:
+        dim += resolved_domain["event"]["dim"]
+    return dim
+
+
+def encode_domain(extracted: dict, resolved_domain: dict, domain: str, max_jets: int = None) -> np.ndarray:
+    """
+    domain: "truth" or "reco". Builds the full feature array by
+    concatenating each configured object's encoding, then the event
+    block, in the order they appear in resolved_domain["objects"].
+
+    "jet" is handled specially: it's a repeated object (up to max_jets),
+    so it gets encoded once per slot and concatenated max_jets times,
+    matching the existing reco layout (Higgs, njet, jet_1, ..., jet_N).
+    """
+    parts = []
+    for obj_name, obj_cfg in resolved_domain["objects"].items():
+        vt = obj_cfg["variable_transforms"]
+        if obj_name == "jet":
+            jet_vals = extracted[f"jet_{domain}"]
+            for j in range(max_jets):
+                slot_vals = {k: v[:, j] for k, v in jet_vals.items()}
+                parts.append(encode_object(slot_vals, vt))
+        else:
+            vals = extracted[f"{obj_name}_{domain}"]
+            parts.append(encode_object(vals, vt))
+
+    if "event" in resolved_domain:
+        vt = resolved_domain["event"]["variable_transforms"]
+        vals = extracted[f"event_{domain}"]
+        parts.append(encode_object(vals, vt))
+
+    return np.concatenate(parts, axis=-1)
+
+
+def decode_domain(X: np.ndarray, resolved_domain: dict, domain: str, max_jets: int = None) -> dict:
+    """
+    Inverse of encode_domain: a flat encoded array -> the same
+    {"H_<domain>": {...}, "jet_<domain>": {...}, "event_<domain>": {...}}
+    shape that data.py/preprocessing build before encoding. Repeated
+    "jet" slots are decoded individually then stacked into (N, max_jets)
+    arrays per physical quantity, matching how extract_reco_quantities
+    already shapes jet arrays.
+    """
+    offset = 0
+    out = {}
+    for obj_name, obj_cfg in resolved_domain["objects"].items():
+        vt = obj_cfg["variable_transforms"]
+        width = sum(TRANSFORMS[t][0] for _, t in vt)
+        if obj_name == "jet":
+            slot_dicts = []
+            for _ in range(max_jets):
+                feat = X[..., offset:offset + width]
+                slot_dicts.append(decode_object(feat, vt))
+                offset += width
+            keys = slot_dicts[0].keys()
+            out[f"jet_{domain}"] = {k: np.stack([sd[k] for sd in slot_dicts], axis=1) for k in keys}
+        else:
+            feat = X[..., offset:offset + width]
+            out[f"{obj_name}_{domain}"] = decode_object(feat, vt)
+            offset += width
+
+    if "event" in resolved_domain:
+        vt = resolved_domain["event"]["variable_transforms"]
+        width = sum(TRANSFORMS[t][0] for _, t in vt)
+        feat = X[..., offset:offset + width]
+        out[f"event_{domain}"] = decode_object(feat, vt)
+        offset += width
+
+    return out
+
+
+def four_vector_eta(fv: np.ndarray) -> np.ndarray:
+    """eta from a (..., 4) (E, px, py, pz) four-vector."""
+    px, py, pz = fv[..., 1], fv[..., 2], fv[..., 3]
+    p = np.sqrt(px ** 2 + py ** 2 + pz ** 2)
+    return 0.5 * np.log((p + pz + 1e-12) / (p - pz + 1e-12))
+
+
+def four_vector_phi(fv: np.ndarray) -> np.ndarray:
+    """phi from a (..., 4) (E, px, py, pz) four-vector."""
+    return np.arctan2(fv[..., 2], fv[..., 1])
+
+
+def eta_ordered_dphi_jj(fv_a: np.ndarray, fv_b: np.ndarray) -> np.ndarray:
+    """
+    The CP-sensitive signed Delta phi_jj: order the two jets by *signed*
+    rapidity (not |eta|, not pT -- see literature note in
+    compute_swap_mask), forward jet first, then take
+    delta_phi(phi_forward, phi_backward). Computed directly from
+    four-vectors so it's correct regardless of which convention
+    (parton_ordering: pt or eta) was used to label j1/j2 at training
+    time -- this is always re-derived fresh, not read off training labels.
+    """
+    eta_a, eta_b = four_vector_eta(fv_a), four_vector_eta(fv_b)
+    phi_a, phi_b = four_vector_phi(fv_a), four_vector_phi(fv_b)
+
+    a_is_forward = eta_a >= eta_b
+    phi_forward = np.where(a_is_forward, phi_a, phi_b)
+    phi_backward = np.where(a_is_forward, phi_b, phi_a)
+    return delta_phi(phi_forward, phi_backward)
