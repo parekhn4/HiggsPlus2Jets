@@ -69,11 +69,6 @@ def validate_selection(variables: list[str], target: str, domain: str) -> None:
             raise ValueError(f"'{var}' does not apply to '{target}'")
         if domain not in entry["domains"]:
             raise ValueError(f"'{var}' is not available in domain '{domain}'")
-        if not entry["trainable"]:
-            raise ValueError(
-                f"'{var}' is not trainable (plotting/analysis-only) and cannot be "
-                f"selected in a truth/reco config block."
-            )
 
 # The one resolver: catalog selection -> the field/value_type shape kinematics.py's make_layout/decode_kinematics/four_vector already expect.
 # Works for both physics objects (H, j1, j2, jet) and "event" — event-level selections just never end up with an E/mass, so value_type stays "fixed" and is simply unused for those.
@@ -87,7 +82,7 @@ def resolve_object(variables: list[str], target: str, domain: str,
         (var, transforms.get(var, CATALOG[var]["default_transform"]))
         for var in variables
     ]
-    dim = sum(_TRANSFORM_WIDTHS[t] for _, t in variable_transforms)
+    dim = sum(TRANSFORMS[t][0] for _, t in variable_transforms)
 
     value_type = "energy" if "E" in variables else "mass" if "mass" in variables else "fixed"
     return {"variable_transforms": variable_transforms, "value_type": value_type, "dim": dim}
