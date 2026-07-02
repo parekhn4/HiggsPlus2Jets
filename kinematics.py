@@ -1,34 +1,8 @@
-"""
-Pure kinematics math shared by both model variants (no_energy, with_energy).
-
-No I/O, no config-file reading, no ROOT/torch imports — just numpy. Everything
-here operates on plain arrays and small dicts, so it's identical code whether
-called from data.py (training), preprocessing.py (inference reco-building), or
-inference.py (posterior sample -> four-vector).
-
-Design: field layout is name-keyed, not positional. A model variant's object
-just lists which named fields it has (e.g. ["log_pt", "eta", "phi_sin",
-"phi_cos", "log_E"]); make_layout() turns that into a {name: index} dict, and
-decode_kinematics() reads by name. Nothing here ever assumes "feature 0 is
-always pt" — that assumption only ever existed implicitly before, and broke
-exactly when with_energy added a 5th slot with a different meaning per object.
-
-The one thing that's still genuinely positional: j2's phi is never stored
-directly, in either model. Its sin/cos slot stores delta_phi_jj =
-delta_phi(phi_j1, phi_j2), so recovering true phi_j2 requires phi_j1 as an
-external input. That coupling is real physics, not an artifact of a bad
-layout, so it's handled explicitly in reconstruct_event() rather than papered
-over.
-"""
-
 from __future__ import annotations
 
 import numpy as np
 
-
-# ──────────────────────────────────────────────────────────────────────────
-# Angle helpers
-# ──────────────────────────────────────────────────────────────────────────
+# delta phi and phi recovery
 
 def delta_phi(phi1, phi2):
     """Wrapped phi difference, result in (-pi, pi]."""
@@ -36,17 +10,11 @@ def delta_phi(phi1, phi2):
 
 
 def recover_phi_j2(phi_j1, dphi_jj):
-    """
-    j2's phi slot stores delta_phi_jj = delta_phi(phi_j1, phi_j2), so the
-    actual phi_j2 is recovered as delta_phi(phi_j1, delta_phi_jj) —
-    note: no negative sign, despite delta_phi being antisymmetric-looking.
-    """
     return delta_phi(phi_j1, dphi_jj)
 
 
-# ──────────────────────────────────────────────────────────────────────────
+
 # Named field layout — order-independent by construction
-# ──────────────────────────────────────────────────────────────────────────
 
 def make_layout(fields: list[str]) -> dict[str, int]:
     """
@@ -82,6 +50,36 @@ def decode_kinematics(feat: np.ndarray, layout: dict[str, int]) -> dict:
         out["E"] = np.expm1(feat[..., layout["log_E"]])
     if "log_mass" in layout:
         out["mass"] = np.expm1(feat[..., layout["log_mass"]])
+    return out
+
+def encode_kinematics(values: dict, layout: dict[str, int]) -> np.ndarray:
+    """
+    values : dict of physical quantities, e.g. {"pt":..., "eta":..., "phi":..., "mass":...}
+    layout : from make_layout()
+    returns: (..., len(layout)) float32 array — inverse of decode_kinematics,
+             built by name so field order never has to be assumed by the caller.
+    """
+    sample_val = next(iter(values.values()))
+    out_shape = np.shape(sample_val) + (len(layout),)
+    out = np.zeros(out_shape, dtype=np.float32)
+
+    if "log_pt" in layout:
+        out[..., layout["log_pt"]] = np.log1p(values["pt"])
+    if "eta" in layout:
+        out[..., layout["eta"]] = values["eta"]
+    if "phi_sin" in layout:
+        out[..., layout["phi_sin"]] = np.sin(values["phi"])
+    if "phi_cos" in layout:
+        out[..., layout["phi_cos"]] = np.cos(values["phi"])
+    if "dphi_sin" in layout:
+        out[..., layout["dphi_sin"]] = np.sin(values["dphi"])
+    if "dphi_cos" in layout:
+        out[..., layout["dphi_cos"]] = np.cos(values["dphi"])
+    if "log_E" in layout:
+        out[..., layout["log_E"]] = np.log1p(values["E"])
+    if "log_mass" in layout:
+        out[..., layout["log_mass"]] = np.log1p(values["mass"])
+
     return out
 
 
