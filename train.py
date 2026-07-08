@@ -10,12 +10,33 @@ import torch.optim as optim
 import yaml
 
 import preprocessing_training as training
-import scaler_fit
+from sklearn.preprocessing import StandardScaler
 from model import build_model_from_config
 
 
-from sklearn.preprocessing import StandardScaler
+# ──────────────────────────────────────────────────────────────────────────
+# Loss — plain Gaussian NLL for a normalizing flow, confirmed against the
+# source notebook: L = 0.5 * ||z||^2 - log|det J|, no physics penalty term.
+# ──────────────────────────────────────────────────────────────────────────
 
+def cinn_nll(model, x_truth, x_reco):
+    z, log_det = model(x_truth, x_reco)
+    return torch.mean(0.5 * torch.sum(z ** 2, dim=1) - log_det)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Scaler fitting — generalized reco/truth scaler fitting.
+#
+# The old notebook's reco scaler fit only on Higgs+njet+jet1 columns, then
+# broadcast jet1's mean/scale to jet slots 2-12 (since most slots are
+# zero-padded and fitting them independently blows up their variance).
+# That trick assumed a fixed-width, fixed-position jet block. With the
+# catalog, jet width is config-dependent, so this generalizes it: find the
+# jet block's layout from resolved_reco (not hardcoded), fit on all
+# non-jet columns plus the first jet slot, broadcast that fit to every
+# other jet slot. Truth scaling has no such special case -- plain
+# StandardScaler.
+# ──────────────────────────────────────────────────────────────────────────
 
 def resolve_reco_layout(resolved_reco: dict, max_jets: int):
     """
@@ -85,15 +106,6 @@ def fit_truth_scaler(y_train: np.ndarray) -> dict:
     scaler.fit(y_train)
     return {"mean": scaler.mean_.astype(np.float32), "scale": scaler.scale_.astype(np.float32)}
 
-# ──────────────────────────────────────────────────────────────────────────
-# Loss — plain Gaussian NLL for a normalizing flow, confirmed against the
-# source notebook: L = 0.5 * ||z||^2 - log|det J|, no physics penalty term.
-# ──────────────────────────────────────────────────────────────────────────
-
-def cinn_nll(model, x_truth, x_reco):
-    z, log_det = model(x_truth, x_reco)
-    return torch.mean(0.5 * torch.sum(z ** 2, dim=1) - log_det)
-
 
 # ──────────────────────────────────────────────────────────────────────────
 # Data loading — pool all scenarios (model is scenario-agnostic by
@@ -120,8 +132,8 @@ def split_by_fold(df: pd.DataFrame, val_fold: int, reco_dim: int, truth_dim: int
     x_cols = [f"x_{i}" for i in range(reco_dim)]
     y_cols = [f"y_{i}" for i in range(truth_dim)]
 
-    train_df = df[df["fold"] != val_fold]
-    val_df = df[df["fold"] == val_fold]
+    train_df = df[df["AUX_fold"] != val_fold]
+    val_df = df[df["AUX_fold"] == val_fold]
 
     X_train = train_df[x_cols].to_numpy(dtype=np.float32)
     y_train = train_df[y_cols].to_numpy(dtype=np.float32)
@@ -138,6 +150,7 @@ def split_by_fold(df: pd.DataFrame, val_fold: int, reco_dim: int, truth_dim: int
 def train(args: argparse.Namespace) -> None:
     with open(args.config) as f:
         config = yaml.safe_load(f)
+        torch.manual_seed(config["data"].get("seed", 42))
 
     if torch.cuda.is_available():
         device = "cuda"
@@ -157,14 +170,14 @@ def train(args: argparse.Namespace) -> None:
 
     print(f"loading preprocessed data from {args.preprocessed}")
     df = load_pooled_dataset(args.preprocessed, reco_dim, truth_dim)
-    print(f"  pooled dataset: {len(df)} events across {df['sample'].nunique()} scenarios")
+    print(f"  pooled dataset: {len(df)} events across {df['AUX_sample'].nunique()} scenarios")
 
     X_train, y_train, X_val, y_val = split_by_fold(df, args.val_fold, reco_dim, truth_dim)
     print(f"  train: {len(X_train)}  val (fold {args.val_fold}): {len(X_val)}")
 
     print("fitting scalers on training fold only...")
-    x_scaler = scaler_fit.fit_reco_scaler(X_train, resolved["reco"], max_jets)
-    y_scaler = scaler_fit.fit_truth_scaler(y_train)
+    x_scaler = fit_reco_scaler(X_train, resolved["reco"], max_jets)
+    y_scaler = fit_truth_scaler(y_train)
 
     def scale_x(X):
         return (X - x_scaler["mean"]) / x_scaler["scale"]
@@ -177,7 +190,7 @@ def train(args: argparse.Namespace) -> None:
     X_val_s = scale_x(X_val)
     y_val_s = scale_y(y_val)
 
-    model = build_model_from_config(config, device=device)
+    model = build_model_from_config(config, target_dim=truth_dim, context_dim=reco_dim, device=device)
     optimizer = optim.Adam(model.parameters(), lr=config["training"].get("lr", 1e-4))
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min",
@@ -251,6 +264,7 @@ def save_checkpoint(path, model, optimizer, scheduler, epoch, val_loss,
                                                  # fixed_mass, parton_ordering -- everything
                                                  # inference.py needs to rebuild this exact
                                                  # input/output contract
+        "max_jets": config["data"]["max_jets"],  # needed alongside resolved_config to compute dims
         "x_mean": x_scaler["mean"], "x_scale": x_scaler["scale"],
         "y_mean": y_scaler["mean"], "y_scale": y_scaler["scale"],
         "val_fold": val_fold,

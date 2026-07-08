@@ -47,10 +47,10 @@ def reco_selection_mask(native: dict, config: dict):
 def extract_reco_quantities(native: dict, mask, config: dict) -> dict:
     """
     Given native reco arrays and an event mask (already combined by the
-    caller with whatever else it needs -- e.g. data.py ANDs in truth
-    cuts), build the reco Higgs (from photons), padded jet arrays, and
-    njet. Also applies the Higgs mass-window cut and returns the
-    resulting mass_ok boolean array plus n_events, so callers with
+    caller with whatever else it needs -- e.g. preprocessing_training.py
+    ANDs in truth cuts), build the reco Higgs (from photons), padded jet
+    arrays, and njet. Also applies the Higgs mass-window cut and returns
+    the resulting mass_ok boolean array plus n_events, so callers with
     additional (e.g. truth) arrays can align to the same final selection.
     """
     sel = config["selection"]
@@ -69,6 +69,12 @@ def extract_reco_quantities(native: dict, mask, config: dict) -> dict:
     if sel["use_mass_window"]:
         center, half_width = sel["mass_window_center"], sel["mass_window_half_width"]
         mass_ok = np.abs(h_mass - center) < half_width
+
+    # original event index in the ROOT file, tracked through both selection
+    # stages -- lets a surviving row be traced back to "which event in the
+    # file", which otherwise disappears once rows get pooled/reindexed
+    mask_np = ak.to_numpy(mask)
+    event_id = np.where(mask_np)[0][mass_ok]
 
     max_jets = config["data"]["max_jets"]
     jet_pt_ak = native["jet_pt"][mask][mass_ok]
@@ -104,6 +110,7 @@ def extract_reco_quantities(native: dict, mask, config: dict) -> dict:
     return {
         "n_events": n_events,
         "mass_ok": mass_ok,
+        "event_id": event_id,
         "H_reco": {"pt": h_pt[mass_ok], "eta": h_eta[mass_ok], "phi": h_phi[mass_ok],
                     "mass": h_mass[mass_ok], "E": h_E[mass_ok]},
         "jet_reco": {"pt": jet_pt, "eta": jet_eta, "phi": jet_phi, "mass": jet_mass, "E": jet_E},
@@ -116,8 +123,8 @@ def build_reco_features(path: str, sample_name: str, config: dict,
     """
     Full inference-time pipeline: ROOT -> selection -> encoded X_reco.
 
-    resolved_reco must come from data.resolve_config(config)["reco"] (or
-    a checkpoint's saved resolved config) -- never refit or reselected
+    resolved_reco must come from preprocessing_training.resolve_config(config)["reco"]
+    (or a checkpoint's saved resolved config) -- never refit or reselected
     here, same reasoning as the scaler: reco encoding must match exactly
     what the model was trained on, not whatever this file's config says
     in isolation.
@@ -130,9 +137,10 @@ def build_reco_features(path: str, sample_name: str, config: dict,
     X_reco = kinematics.encode_domain(extracted, resolved_reco, "reco", max_jets=max_jets)
 
     meta = pd.DataFrame({
-        "sample": sample_name,
-        "n_reco_jets": extracted["event_reco"]["njet"],
-        "reco_higgs_mass": extracted["H_reco"]["mass"],
+        "AUX_sample": sample_name,
+        "AUX_event_id": extracted["event_id"],
+        "AUX_n_reco_jets": extracted["event_reco"]["njet"],
+        "AUX_reco_higgs_mass": extracted["H_reco"]["mass"],
     })
 
     return X_reco, meta

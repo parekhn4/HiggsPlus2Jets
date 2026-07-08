@@ -1,31 +1,3 @@
-"""
-evaluate.py — closure testing on a held-out fold: sample the posterior
-for events the model never trained on, compare truth / reco / unfolded
-distributions, per scenario.
-
-Uses the SAME fold the checkpoint recorded as its validation fold
-(checkpoint["val_fold"]) -- this is a genuine held-out closure test, not
-just re-running on arbitrary data. Requires preprocessing_training.py's
-output (has truth), not preprocessing_inference.py's -- closure testing
-needs truth to compare against, unlike the plain inference path.
-
-Reports both:
-  - dphi_jj as encoded during training (whatever parton_ordering the
-    config used -- pt or eta)
-  - the CP-quality, literature-convention eta-ordered Delta phi_jj,
-    re-derived directly from four-vectors regardless of training's
-    parton_ordering choice (see kinematics.eta_ordered_dphi_jj)
-
-Usage
------
-    python evaluate.py \\
-        --checkpoint best_model.pt \\
-        --config configs/no_energy.yaml \\
-        --preprocessed preprocessed.h5 \\
-        --n-samples 200 \\
-        --output-dir eval_plots/
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -46,7 +18,7 @@ def load_val_fold(preprocessed_path: str, scenario: str, val_fold: int,
                    reco_dim: int, truth_dim: int) -> pd.DataFrame:
     with pd.HDFStore(preprocessed_path, mode="r") as store:
         df = store[scenario]
-    return df[df["fold"] == val_fold].reset_index(drop=True)
+    return df[df["AUX_fold"] == val_fold].reset_index(drop=True)
 
 
 def build_observables(four_vectors: dict) -> dict:
@@ -134,7 +106,7 @@ def run_evaluate(args: argparse.Namespace) -> None:
     print(f"device: {device}")
 
     bundle = load_checkpoint_bundle(args.checkpoint, config, device)
-    val_fold = torch.load(args.checkpoint, map_location=device)["val_fold"]
+    val_fold = torch.load(args.checkpoint, map_location=device, weights_only=False)["val_fold"]
     print(f"evaluating on held-out fold {val_fold} (the checkpoint's own validation fold)")
 
     reco_dim = kinematics.total_dim(bundle["resolved"]["reco"], max_jets=bundle["max_jets"])
@@ -144,6 +116,15 @@ def run_evaluate(args: argparse.Namespace) -> None:
 
     with pd.HDFStore(args.preprocessed, mode="r") as store:
         scenarios = [k.strip("/") for k in store.keys()]
+
+    plot_specs = list(plotting.DEFAULT_PLOT_SPECS) + [
+        ("dphi_eta_ordered", np.linspace(-np.pi, np.pi, 20),
+         r"$\Delta\phi_{jj}$ (eta-ordered, CP)", r"$\Delta\phi_{jj}$ (CP convention)"),
+    ]
+
+    # accumulated across all scenarios, for the pooled plot -- this is the
+    # closest proxy to "real data," which won't be separable by CP scenario
+    pooled = {"truth": [], "reco": [], "flow": []}
 
     for scenario in scenarios:
         print(f"\n[{scenario}]")
@@ -155,17 +136,41 @@ def run_evaluate(args: argparse.Namespace) -> None:
 
         result = evaluate_scenario(scenario, df_val, bundle, args.n_samples, device, args.batch_size)
 
-        plot_specs = list(plotting.DEFAULT_PLOT_SPECS) + [
-            ("dphi_eta_ordered", np.linspace(-np.pi, np.pi, 20),
-             r"$\Delta\phi_{jj}$ (eta-ordered, CP)", r"$\Delta\phi_{jj}$ (CP convention)"),
-        ]
         fig = plotting.plot_closure(
             result["truth"], result["reco"], result["flow"],
             plot_specs=plot_specs, title=f"Closure: {scenario} (fold {val_fold})",
         )
-        out_path = Path(args.output_dir) / f"closure_{scenario}.png"
-        fig.savefig(out_path, dpi=120, bbox_inches="tight")
+        out_path = Path(args.output_dir) / f"closure_{scenario}.pdf"
+        fig.savefig(out_path, bbox_inches="tight")
         print(f"  wrote {out_path}")
+
+        for key in ("truth", "reco", "flow"):
+            pooled[key].append(result[key])
+
+    if not any(pooled["truth"]):
+        print("\nno scenarios had held-out events -- skipping pooled plot")
+        return
+
+    # ── pooled plot: all scenarios combined, no CP-scenario distinction --
+    # this is the closure test that best matches what evaluating on real
+    # data will actually look like, since real events won't come pre-labeled
+    # by CP coupling point ──
+    print(f"\n[pooled, all {len(scenarios)} scenarios combined]")
+    pooled_obs = {}
+    for domain in ("truth", "reco", "flow"):
+        obs_dicts = pooled[domain]
+        pooled_obs[domain] = {
+            key: np.concatenate([d[key] for d in obs_dicts])
+            for key in obs_dicts[0].keys()
+        }
+
+    fig = plotting.plot_closure(
+        pooled_obs["truth"], pooled_obs["reco"], pooled_obs["flow"],
+        plot_specs=plot_specs, title=f"Closure: pooled, all scenarios (fold {val_fold})",
+    )
+    out_path = Path(args.output_dir) / "closure_pooled.pdf"
+    fig.savefig(out_path, bbox_inches="tight")
+    print(f"  wrote {out_path}")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

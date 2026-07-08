@@ -1,29 +1,3 @@
-"""
-preprocessing_training.py — ROOT (reco + truth branches) -> catalog-driven
-feature arrays -> persisted per-scenario HDF5, with a reproducible fold column.
-
-Only file that ever touches Particle.* truth branches. Inference-time,
-truth-free reco building stays in preprocessing_inference.py.
-
-The reco half (Higgs-from-photons, jet padding, njet) is NOT duplicated
-here -- it's delegated to preprocessing_inference.py's
-extract_reco_quantities, since it's the exact same computation. This is a
-hard requirement, not a style choice: if this file computed reco features
-independently, any drift between the two implementations would silently
-mean the model is fed different reco features at training time than at
-inference time.
-
-Pipeline per scenario file:
-  1. read native-named branches (via catalog.resolve_branch_names)
-  2. apply selection cuts, pT- or eta-order the partons
-  3. compute physical quantities (photons_to_higgs via delegation, dphi_jj,
-     per-jet padding via delegation)
-  4. encode each object/event block via kinematics.encode_domain
-  5. concatenate into X_reco / y_truth, in config's object order
-  6. assign a persisted fold column (seeded once, never recomputed)
-  7. write one HDF5 key per scenario
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -32,6 +6,7 @@ import numpy as np
 import pandas as pd
 import uproot
 import awkward as ak
+import yaml
 
 import catalog
 import kinematics
@@ -112,6 +87,8 @@ def select_and_extract(native: dict, config: dict) -> dict:
     inference, so this just combines the truth-level cuts with
     preprocessing_inference.reco_selection_mask's cuts and delegates.
     """
+    sel = config["selection"]
+
     pid = native["particle_pid"]
     status = native["particle_status"]
     is_higgs = (pid == 25) & (status == 22)
@@ -155,6 +132,7 @@ def select_and_extract(native: dict, config: dict) -> dict:
 
     return {
         "n_events": reco["n_events"],
+        "event_id": reco["event_id"],
         "H_reco": reco["H_reco"],
         "jet_reco": reco["jet_reco"],
         "event_reco": reco["event_reco"],
@@ -195,10 +173,11 @@ def build_scenario(path: str, sample_name: str, config: dict, resolved: dict) ->
     fold = assign_folds(n_events, config["data"].get("n_folds", 5), config["data"].get("seed", 42))
 
     df = pd.DataFrame({
-        "sample": sample_name,
-        "fold": fold,
-        "n_reco_jets": extracted["event_reco"]["njet"],
-        "reco_higgs_mass": extracted["H_reco"]["mass"],
+        "AUX_sample": sample_name,
+        "AUX_event_id": extracted["event_id"],
+        "AUX_fold": fold,
+        "AUX_n_reco_jets": extracted["event_reco"]["njet"],
+        "AUX_reco_higgs_mass": extracted["H_reco"]["mass"],
     })
     for i in range(X_reco.shape[1]):
         df[f"x_{i}"] = X_reco[:, i]
@@ -221,3 +200,36 @@ def build_and_save(config: dict, output_path: str) -> None:
             df = build_scenario(str(full_path), name, config, resolved)
             store.put(name, df, format="fixed")
             print(f"[{name}] wrote {len(df)} events -> {output_path}[{name}]")
+
+    # sidecar snapshot: exact config that produced this h5, plus when --
+    # answers "what config built this file" without needing to trust
+    # whatever configs/*.yaml happens to say later, since that file can
+    # change after the fact
+    import datetime
+    snapshot = {"created_at": datetime.datetime.now().isoformat(), "config": config}
+    snapshot_path = f"{output_path}.config.yaml"
+    with open(snapshot_path, "w") as f:
+        yaml.safe_dump(snapshot, f, sort_keys=False)
+    print(f"wrote config snapshot -> {snapshot_path}")
+
+# ──────────────────────────────────────────────────────────────────────────
+# CLI
+# ──────────────────────────────────────────────────────────────────────────
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Build the training-time preprocessed HDF5 (reco + truth, per scenario, with fold column)."
+    )
+    p.add_argument("--config", required=True, help="Model config YAML")
+    p.add_argument("--output", required=True, help="Output HDF5 path")
+    return p
+
+
+def main():
+    args = build_arg_parser().parse_args()
+    with open(args.config) as f:
+        config = yaml.safe_load(f)
+    build_and_save(config, args.output)
+
+if __name__ == "__main__":
+    main()

@@ -1,6 +1,5 @@
 """
 Usage
------
     python inference.py \\
         --checkpoint best_model.pt \\
         --config configs/no_energy.yaml \\
@@ -35,7 +34,7 @@ def load_checkpoint_bundle(checkpoint_path: str, config: dict, device: str) -> d
     checkpoint, cross-checking against the runtime config where they
     legitimately overlap (max_jets) rather than trusting either blindly.
     """
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     ckpt_max_jets = checkpoint["max_jets"]
     cfg_max_jets = config["data"]["max_jets"]
@@ -172,6 +171,13 @@ def run_inference(args: argparse.Namespace) -> None:
             event_idx = np.repeat(np.arange(len(X_reco)), args.n_samples)
             sample_idx = np.tile(np.arange(args.n_samples), len(X_reco))
             df = four_vectors_to_dataframe(four_vectors, event_idx, sample_idx)
+
+            # merge in the AUX_ metadata (already AUX_-prefixed by
+            # build_reco_features), repeated once per posterior sample to
+            # match df's event-major row order -- without this, four_vectors.h5
+            # has no way to trace an unfolded row back to its source event
+            meta_repeated = meta.iloc[event_idx].reset_index(drop=True)
+            df = pd.concat([meta_repeated, df], axis=1)
 
             store.put(scenario_name, df, format="fixed")
             print(f"  wrote {len(df)} rows to {args.output}[{scenario_name}]")
