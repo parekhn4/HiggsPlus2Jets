@@ -51,7 +51,7 @@ zero-padding getting scaled by jet-1 stats and not a bug.
 
 All of this scaler info gets saved directly into the checkpoint now.
 
-## Delta_phi_jj: two different versions, don't mix them up
+## Delta_phi_jj
 
 - Training uses whatever `parton_ordering` the config says (pt or eta) to
   decide which parton is "j1" and pair them up. Doesn't matter much which
