@@ -31,16 +31,20 @@ able to unfold without that info.
   it (weights, scaler, which config built it, which h5 file it trained on).
 - `inference.py` - loads a checkpoint, samples the posterior, writes every
   sampled four-vector per event to HDF5 (nothing averaged).
-- `reduce_posterior.py` - collapses `inference.py`'s output to one on-shell
-  four-vector per event (mean pt/eta/phi, fixed mass, energy recomputed).
+- `reduce_posterior.py` - collapses `inference.py`'s output to one
+  four-vector per event, either as the on-shell mean (avg pt/eta/phi, fixed
+  mass, energy recomputed) or a single random posterior draw (already
+  unweighted, no re-derivation needed) -- pick one or both.
 - `unfold_and_average.py` - runs the two above back to back in one command.
 - `evaluate.py` - like inference but on the held-out validation fold, so you
   can actually check if it's working (closure plots comparing truth vs reco
   vs unfolded).
-- `validate_unfolding.py` - on the held-out fold, compares the per-event
-  mean vs. the full posterior as ways to collapse the samples: closure
-  plots for both, plus (truth - reco/mean/samples) residual histograms
-  overlaid so you can see which reduction is actually tighter.
+- `validate_unfolding.py` - on the held-out fold, compares mean vs. single
+  draw vs. the full posterior as ways to collapse the samples: closure
+  plots for each, plus (truth - reco/mean/draw/samples) residual histograms
+  overlaid so you can see which reduction is actually tighter. The mean can
+  distort a genuinely multimodal observable (e.g. dphi_jj under a
+  jet-labeling ambiguity) in a way a single draw doesn't.
 - `plotting.py` - the actual plot-drawing code, used by evaluate.py and
   validate_unfolding.py.
 
@@ -95,21 +99,27 @@ python train.py --config configs/no_energy.yaml --preprocessed preprocessed.h5 -
 are assigned once during preprocessing and don't change between runs.
 
 3. Unfold (only needs Photon/Jet branches, works on real data too). Get the
-   full posterior, the per-event mean, or both in one command:
+   full posterior, a per-event reduction, or both in one command:
 
 ```
-# full posterior: samples.h5[scenario]/four_vectors/{H,j1,j2}, shape (n_events, n_samples, 4)
+# full posterior: samples.h5[scenario]/four_vectors/unfolded/{H,j1,j2}, shape (n_events, n_samples, 4)
 python inference.py --checkpoint best_model.pt --config configs/no_energy.yaml \
     --data-dir Delphes_Data/ --output samples.h5 --n-samples 500 [--batch-size 512] [--seed 42]
 
-# collapse to one on-shell four-vector/event
-python reduce_posterior.py --input samples.h5 --output means.h5
+# collapse to one four-vector/event -- give one or both output paths
+python reduce_posterior.py --input samples.h5 \
+    --output-mean means.h5 --output-draw draws.h5 [--draw-index 0]
 
-# or both at once (keeps the full-sample file by default; --discard-samples to drop it,
-# --samples-output PATH to control where it's kept)
+# or both (sampling + reduction) at once (keeps the full-sample file by default;
+# --discard-samples to drop it, --samples-output PATH to control where it's kept)
 python unfold_and_average.py --checkpoint best_model.pt --config configs/no_energy.yaml \
-    --data-dir Delphes_Data/ --output means.h5 --n-samples 500
+    --data-dir Delphes_Data/ --output-mean means.h5 --output-draw draws.h5 --n-samples 500
 ```
+
+If you only ever want `--output-draw` (never the mean or full posterior),
+sampling 500/event just to keep 1 is wasteful -- `--n-samples 1` gives the
+identical distribution (draws are i.i.d., no reweighting needed) at a
+fraction of the cost.
 
 4. Check that it actually works (closure plots on the held-out fold):
 
@@ -121,7 +131,7 @@ This makes one plot per scenario plus one pooled plot (all scenarios
 combined, no CP label) since that pooled one is the closer match to what
 evaluating on real data will actually look like.
 
-5. Compare the mean-vs-full-posterior reduction against truth (held-out fold):
+5. Compare mean vs. single-draw vs. full-posterior reduction against truth (held-out fold):
 
 ```
 python validate_unfolding.py --checkpoint best_model.pt --config configs/no_energy.yaml \
