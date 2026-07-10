@@ -52,13 +52,20 @@ def reduce_file(input_path: str, output_path: str) -> None:
 
             fv_out = out_grp.create_group("four_vectors")
             fv_out.attrs["components"] = "E, px, py, pz"
+
+            # reco is already one four-vector/event -- copy through unchanged
+            reco_out = fv_out.create_group("reco")
+            for name, ds in in_grp["four_vectors"]["reco"].items():
+                reco_out.create_dataset(name, data=ds[...])
+
+            unfolded_out = fv_out.create_group("unfolded")
             n_events = n_samples = None
-            for name, ds in in_grp["four_vectors"].items():
+            for name, ds in in_grp["four_vectors"]["unfolded"].items():
                 fv = ds[...]
                 n_events, n_samples = fv.shape[0], fv.shape[1]
                 value_type = str(ds.attrs["value_type"])
                 fixed_mass = float(ds.attrs["fixed_mass"])
-                fv_out.create_dataset(name, data=average_four_vector_samples(fv, value_type, fixed_mass))
+                unfolded_out.create_dataset(name, data=average_four_vector_samples(fv, value_type, fixed_mass))
 
             meta_out = out_grp.create_group("meta")
             for key, ds in in_grp["meta"].items():

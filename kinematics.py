@@ -299,6 +299,11 @@ def four_vector_phi(fv: np.ndarray) -> np.ndarray:
     return np.arctan2(fv[..., 2], fv[..., 1])
 
 
+def four_vector_pt(fv: np.ndarray) -> np.ndarray:
+    """pt from a (..., 4) (E, px, py, pz) four-vector."""
+    return np.sqrt(fv[..., 1] ** 2 + fv[..., 2] ** 2)
+
+
 def eta_ordered_dphi_jj(fv_a: np.ndarray, fv_b: np.ndarray) -> np.ndarray:
     """
     The CP-sensitive signed Delta phi_jj: order the two jets by *signed*
@@ -316,3 +321,50 @@ def eta_ordered_dphi_jj(fv_a: np.ndarray, fv_b: np.ndarray) -> np.ndarray:
     phi_forward = np.where(a_is_forward, phi_a, phi_b)
     phi_backward = np.where(a_is_forward, phi_b, phi_a)
     return delta_phi(phi_forward, phi_backward)
+
+
+def reco_four_vectors(X_reco: np.ndarray, resolved_reco: dict, max_jets: int) -> dict:
+    """
+    Build {"H": (N,4), "j1": (N,4), "j2": (N,4)} detector-level four-vectors
+    from an encoded reco feature array -- H from the decoded reco Higgs
+    block, j1/j2 from the first two jet slots (Delphes' own pT ordering) as
+    a detector-level proxy. Config-agnostic: works with whatever variables
+    the reco config actually has (falls back to mass=0 if "mass" isn't one
+    of them). Same convention evaluate.py used before this was factored out
+    here so inference.py/evaluate.py/the validation script all agree.
+    """
+    decoded_reco = decode_domain(X_reco, resolved_reco, "reco", max_jets=max_jets)
+
+    H = decoded_reco["H_reco"]
+    H_fv = four_vector(H["pt"], H["eta"], H["phi"], mass=H.get("mass", 0.0))
+
+    jet = decoded_reco["jet_reco"]
+    jet_mass = jet.get("mass", np.zeros_like(jet["pt"]))
+    j1_fv = four_vector(jet["pt"][:, 0], jet["eta"][:, 0], jet["phi"][:, 0], mass=jet_mass[:, 0])
+    j2_fv = four_vector(jet["pt"][:, 1], jet["eta"][:, 1], jet["phi"][:, 1], mass=jet_mass[:, 1])
+
+    return {"H": H_fv, "j1": j1_fv, "j2": j2_fv}
+
+
+def build_observables(four_vectors: dict) -> dict:
+    """
+    Derive the standard closure/residual observable dict (pt/eta per object,
+    both dphi_jj conventions, deta) from any {"H","j1","j2"} four-vector
+    set -- reco, truth, or unfolded (a per-event mean or a single posterior
+    sample), doesn't matter which: it's pure kinematics on whatever
+    four-vectors are handed in, so it stays correct regardless of which
+    variables a given config actually trained on.
+    """
+    H, j1, j2 = four_vectors["H"], four_vectors["j1"], four_vectors["j2"]
+
+    H_phi = four_vector_phi(H)
+    j1_phi, j2_phi = four_vector_phi(j1), four_vector_phi(j2)
+
+    return {
+        "H_pt": four_vector_pt(H), "H_eta": four_vector_eta(H), "H_phi": H_phi,
+        "j1_pt": four_vector_pt(j1), "j1_eta": four_vector_eta(j1),
+        "j2_pt": four_vector_pt(j2), "j2_eta": four_vector_eta(j2),
+        "dphi": delta_phi(j1_phi, j2_phi),
+        "dphi_eta_ordered": eta_ordered_dphi_jj(j1, j2),
+        "deta": four_vector_eta(j1) - four_vector_eta(j2),
+    }

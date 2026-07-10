@@ -10,8 +10,8 @@ Kept here so the repo can grow into full closure-testing later without
 restructuring.
 
 Typical usage, given truth_obs / reco_obs / flow_obs dicts of the form
-{"dphi": array, "H_pt": array, ...} (see get_observables() below to build
-these from truth/reco/flow kinematic arrays):
+{"dphi": array, "H_pt": array, ...} (see kinematics.build_observables() to
+build these from a {"H","j1","j2"} four-vector dict):
 
     from plotting import plot_closure
     fig = plot_closure(truth_obs, reco_obs, flow_obs)
@@ -23,26 +23,7 @@ from __future__ import annotations
 import numpy as np
 import matplotlib.pyplot as plt
 
-
-# ──────────────────────────────────────────────────────────────────────────
-# Observable dict builder
-# ──────────────────────────────────────────────────────────────────────────
-
-def get_observables(pt_H, eta_H, phi_H, pt_j1, eta_j1, phi_j1,
-                     pt_j2, eta_j2, dphi_jj) -> dict:
-    """
-    Build the standard observable dict from raw kinematics. `dphi_jj`
-    should already be the wrapped delta_phi(phi_j1, phi_j2) — pass
-    phi_from_features(block(arr, "j2")) directly for truth/flow samples,
-    since that slot already stores delta_phi_jj.
-    """
-    return {
-        "H_pt": pt_H, "H_eta": eta_H, "H_phi": phi_H,
-        "j1_pt": pt_j1, "j1_eta": eta_j1,
-        "j2_pt": pt_j2, "j2_eta": eta_j2,
-        "dphi": dphi_jj,
-        "deta": eta_j1 - eta_j2,
-    }
+import kinematics
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -80,6 +61,86 @@ DEFAULT_PLOT_SPECS = [
     ("H_eta", np.linspace(-5, 5, 31), r"$\eta_H$", r"$\eta_H$"),
     ("H_phi", np.linspace(-np.pi, np.pi, 5), r"$\phi_H$", r"$\phi_H$"),
 ]
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Residual / error histograms — per-event fidelity, as opposed to
+# plot_closure's marginal-distribution comparison.
+# ──────────────────────────────────────────────────────────────────────────
+
+ANGULAR_OBSERVABLES = {"H_phi", "dphi", "dphi_eta_ordered"}
+
+DEFAULT_ERROR_SPECS = [
+    ("dphi", np.linspace(-1.0, 1.0, 41), r"$\Delta\phi_{jj}$ residual"),
+    ("deta", np.linspace(-2.0, 2.0, 41), r"$\Delta\eta_{jj}$ residual"),
+    ("j1_pt", np.linspace(-100, 100, 41), r"$p_{T,j1}$ residual [GeV]"),
+    ("j2_pt", np.linspace(-100, 100, 41), r"$p_{T,j2}$ residual [GeV]"),
+    ("j1_eta", np.linspace(-2, 2, 41), r"$\eta_{j1}$ residual"),
+    ("j2_eta", np.linspace(-2, 2, 41), r"$\eta_{j2}$ residual"),
+    ("H_pt", np.linspace(-100, 100, 41), r"$p_{T,H}$ residual [GeV]"),
+    ("H_eta", np.linspace(-2, 2, 41), r"$\eta_H$ residual"),
+    ("H_phi", np.linspace(-1.0, 1.0, 41), r"$\phi_H$ residual"),
+]
+
+
+def observable_residual(key: str, reference: np.ndarray, comparison: np.ndarray) -> np.ndarray:
+    """
+    reference - comparison, wrapping correctly for angular observables (a
+    plain subtraction is wrong there, same issue as kinematics.circular_mean
+    solves for averaging). comparison may carry an extra trailing axis --
+    reference shape (N,), comparison shape (N,) for one point/event (reco,
+    or a per-event mean) or (N, n_samples) for the full posterior, in which
+    case every sample gets its own residual against that event's single
+    reference value.
+    """
+    if comparison.ndim > reference.ndim:
+        reference = reference[..., None]
+    if key in ANGULAR_OBSERVABLES:
+        return kinematics.delta_phi(reference, comparison)
+    return reference - comparison
+
+
+def plot_error_histograms(reference_obs: dict, comparisons: list,
+                           reference_label: str = "truth",
+                           error_specs=None, title: str | None = None, ncols: int = 3):
+    """
+    Grid of (reference - comparison) residual histograms, one panel per
+    observable, with every (comparison_obs, label) pair in `comparisons`
+    overlaid in the same panel -- e.g.
+        [(reco_obs, "reco"), (mean_obs, "unfolded (mean)"),
+         (samples_obs, "unfolded (all samples)")]
+    to directly compare which reduction strategy sits tighter around zero,
+    rather than plot_closure's marginal-shape comparison.
+    """
+    if error_specs is None:
+        error_specs = DEFAULT_ERROR_SPECS
+
+    nplots = len(error_specs)
+    nrows = int(np.ceil(nplots / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(6 * ncols, 4 * nrows), squeeze=False)
+
+    for i, (key, bins, xlabel) in enumerate(error_specs):
+        ax = axes[i // ncols][i % ncols]
+        stats = []
+        for comparison_obs, label in comparisons:
+            diff = observable_residual(key, reference_obs[key], comparison_obs[key]).reshape(-1)
+            ax.hist(diff, bins=bins, histtype="step", linewidth=1.5,
+                    label=f"{reference_label} - {label}")
+            stats.append(f"{label}: $\\mu$={diff.mean():.3g}, $\\sigma$={diff.std():.3g}")
+        ax.axvline(0.0, color="black", linestyle="--", linewidth=1)
+        ax.set_title(f"{xlabel}\n" + "\n".join(stats), fontsize=8)
+        ax.set_xlabel(xlabel, fontsize=8)
+        ax.set_ylabel("count", fontsize=8)
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=7)
+
+    for j in range(nplots, nrows * ncols):
+        axes[j // ncols][j % ncols].axis("off")
+
+    if title:
+        fig.suptitle(title, fontsize=13)
+    fig.tight_layout()
+    return fig
 
 
 def plot_loss_curve(train_losses: list, val_losses: list, title: str | None = None):

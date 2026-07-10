@@ -21,36 +21,6 @@ def load_val_fold(preprocessed_path: str, scenario: str, val_fold: int,
     return df[df["AUX_fold"] == val_fold].reset_index(drop=True)
 
 
-def build_observables(four_vectors: dict) -> dict:
-    """
-    Build the plotting.py observable dict from a {"H":..,"j1":..,"j2":..}
-    four-vector set. Includes both the as-labeled dphi_jj (whatever j1/j2
-    already are) and the re-derived, literature-convention eta-ordered
-    version, which is invariant to how j1/j2 got their labels.
-    """
-    H, j1, j2 = four_vectors["H"], four_vectors["j1"], four_vectors["j2"]
-
-    def pt_eta_phi(fv):
-        px, py = fv[..., 1], fv[..., 2]
-        pt = np.sqrt(px ** 2 + py ** 2)
-        eta = kinematics.four_vector_eta(fv)
-        phi = kinematics.four_vector_phi(fv)
-        return pt, eta, phi
-
-    H_pt, H_eta, H_phi = pt_eta_phi(H)
-    j1_pt, j1_eta, j1_phi = pt_eta_phi(j1)
-    j2_pt, j2_eta, j2_phi = pt_eta_phi(j2)
-
-    dphi_as_labeled = kinematics.delta_phi(j1_phi, j2_phi)
-    dphi_eta_ordered = kinematics.eta_ordered_dphi_jj(j1, j2)
-
-    obs = plotting.get_observables(
-        H_pt, H_eta, H_phi, j1_pt, j1_eta, j1_phi, j2_pt, j2_eta, dphi_as_labeled,
-    )
-    obs["dphi_eta_ordered"] = dphi_eta_ordered
-    return obs
-
-
 def evaluate_scenario(scenario: str, df_val: pd.DataFrame, bundle: dict,
                        n_samples: int, device: str, batch_size: int) -> dict:
     resolved, max_jets, scaler, model = (
@@ -66,23 +36,14 @@ def evaluate_scenario(scenario: str, df_val: pd.DataFrame, bundle: dict,
 
     # ── truth four-vectors: decode directly, no model involved ──
     truth_fv = kinematics.reconstruct_event(y_truth, resolved["truth"])
-    truth_obs = build_observables(truth_fv)
+    truth_obs = kinematics.build_observables(truth_fv)
 
-    # ── reco four-vectors: decode reco encoding, use first two pT-ordered
-    #    jet slots as a "detector-level j1/j2" proxy (jets are pT-ordered
-    #    in the encoded reco array regardless of parton_ordering, which
-    #    only affects truth) ──
-    decoded_reco = kinematics.decode_domain(X_reco, resolved["reco"], "reco", max_jets=max_jets)
-    H_reco_fv = kinematics.four_vector(
-        decoded_reco["H_reco"]["pt"], decoded_reco["H_reco"]["eta"],
-        decoded_reco["H_reco"]["phi"], mass=decoded_reco["H_reco"].get("mass", 0.0),
-    )
-    jet = decoded_reco["jet_reco"]
-    j1_reco_fv = kinematics.four_vector(jet["pt"][:, 0], jet["eta"][:, 0], jet["phi"][:, 0],
-                                          mass=jet.get("mass", np.zeros_like(jet["pt"]))[:, 0])
-    j2_reco_fv = kinematics.four_vector(jet["pt"][:, 1], jet["eta"][:, 1], jet["phi"][:, 1],
-                                          mass=jet.get("mass", np.zeros_like(jet["pt"]))[:, 1])
-    reco_obs = build_observables({"H": H_reco_fv, "j1": j1_reco_fv, "j2": j2_reco_fv})
+    # ── reco four-vectors: H from photons, j1/j2 from the first two
+    #    pT-ordered jet slots as a "detector-level j1/j2" proxy (jets are
+    #    pT-ordered in the encoded reco array regardless of parton_ordering,
+    #    which only affects truth) ──
+    reco_fv = kinematics.reco_four_vectors(X_reco, resolved["reco"], max_jets)
+    reco_obs = kinematics.build_observables(reco_fv)
 
     # ── unfolded (flow) four-vectors: sample posterior, one draw/event
     #    for closure comparison (matches sample count of truth/reco) ──
@@ -93,7 +54,7 @@ def evaluate_scenario(scenario: str, df_val: pd.DataFrame, bundle: dict,
     )
     samples = inference_prep.invert_truth_scaling(samples_scaled, scaler)
     flow_fv = kinematics.reconstruct_event(samples, resolved["truth"])
-    flow_obs = build_observables(flow_fv)
+    flow_obs = kinematics.build_observables(flow_fv)
 
     return {"truth": truth_obs, "reco": reco_obs, "flow": flow_obs}
 

@@ -10,12 +10,16 @@ Usage
 Writes ONE self-contained HDF5 file with the full posterior: every sampled
 four-vector for every event, nothing averaged or reduced. Per scenario:
 
-    /{scenario}/four_vectors/{H,j1,j2}   (n_events, n_samples, 4) of (E,px,py,pz)
-    /{scenario}/meta/{event_id,...}      (n_events,) -- one row per event
+    /{scenario}/four_vectors/reco/{H,j1,j2}      (n_events, 4) of (E,px,py,pz)
+    /{scenario}/four_vectors/unfolded/{H,j1,j2}  (n_events, n_samples, 4)
+    /{scenario}/meta/{event_id,...}               (n_events,) -- one row per event
 
-Each four_vectors dataset carries "value_type" and "fixed_mass" attrs, so
-downstream reduction (see reduce_posterior.py) doesn't need the checkpoint
-or config to know which objects are on a fixed mass shell.
+reco and unfolded are both plain four-vectors (config-agnostic -- any
+pt/eta/phi/dphi_jj/etc. derived quantity can be computed from either one the
+same way, see kinematics.build_observables). Each unfolded dataset carries
+"value_type" and "fixed_mass" attrs, so downstream reduction (see
+reduce_posterior.py) doesn't need the checkpoint or config to know which
+objects are on a fixed mass shell.
 """
 
 from __future__ import annotations
@@ -116,14 +120,20 @@ def sample_posterior_batch(model, X_reco_scaled: np.ndarray, truth_dim: int,
 # Output assembly
 # ──────────────────────────────────────────────────────────────────────────
 
-def write_scenario_group(h5file: h5py.File, scenario_name: str, four_vectors: dict,
+def write_scenario_group(h5file: h5py.File, scenario_name: str, reco_fv: dict, unfolded_fv: dict,
                           meta, resolved_truth: dict, n_events: int, n_samples: int) -> None:
     grp = h5file.create_group(scenario_name)
 
     fv_grp = grp.create_group("four_vectors")
     fv_grp.attrs["components"] = "E, px, py, pz"
-    for name, fv in four_vectors.items():
-        ds = fv_grp.create_dataset(name, data=fv.reshape(n_events, n_samples, 4).astype(np.float32))
+
+    reco_grp = fv_grp.create_group("reco")
+    for name, fv in reco_fv.items():
+        reco_grp.create_dataset(name, data=fv.astype(np.float32))
+
+    unfolded_grp = fv_grp.create_group("unfolded")
+    for name, fv in unfolded_fv.items():
+        ds = unfolded_grp.create_dataset(name, data=fv.reshape(n_events, n_samples, 4).astype(np.float32))
         obj_cfg = resolved_truth["objects"][name]
         ds.attrs["value_type"] = obj_cfg.get("value_type", "fixed")
         ds.attrs["fixed_mass"] = obj_cfg.get("fixed_mass", 0.0)
@@ -185,9 +195,10 @@ def run_inference(args: argparse.Namespace) -> None:
             )
             samples = inference_prep.invert_truth_scaling(samples_scaled, scaler)
 
-            four_vectors = kinematics.reconstruct_event(samples, resolved["truth"])
+            unfolded_fv = kinematics.reconstruct_event(samples, resolved["truth"])
+            reco_fv = kinematics.reco_four_vectors(X_reco, resolved["reco"], max_jets)
 
-            write_scenario_group(h5file, scenario_name, four_vectors, meta.reset_index(drop=True),
+            write_scenario_group(h5file, scenario_name, reco_fv, unfolded_fv, meta.reset_index(drop=True),
                                   resolved["truth"], n_events=n_events, n_samples=args.n_samples)
             print(f"  wrote {n_events} events x {args.n_samples} samples -> {args.output}[{scenario_name}]")
 
