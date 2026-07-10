@@ -7,6 +7,8 @@ import pandas as pd
 import uproot
 import awkward as ak
 import yaml
+import argparse
+import datetime
 
 import catalog
 import kinematics
@@ -66,9 +68,11 @@ def read_native_arrays(path: str, config: dict) -> dict:
     dataset = config.get("dataset", "delphes")
     branch_names = catalog.resolve_branch_names(NATIVE_BRANCHES, dataset=dataset)
     tree_name = config["data"]["tree_name"]
+    max_events = config["data"].get("max_events")
+
 
     with uproot.open(path) as f:
-        arr = f[tree_name].arrays(branch_names, library="ak")
+        arr = f[tree_name].arrays(branch_names, entry_stop=max_events, library="ak")
 
     native_to_branch = dict(zip(NATIVE_BRANCHES, branch_names))
     return {native: arr[branch] for native, branch in native_to_branch.items()}
@@ -205,8 +209,9 @@ def build_and_save(config: dict, output_path: str) -> None:
     # answers "what config built this file" without needing to trust
     # whatever configs/*.yaml happens to say later, since that file can
     # change after the fact
-    import datetime
-    snapshot = {"created_at": datetime.datetime.now().isoformat(), "config": config}
+    
+    snapshot = dict(config)  # copy, don't mutate the original
+    snapshot["_snapshot_created_at"] = datetime.datetime.now().isoformat()
     snapshot_path = f"{output_path}.config.yaml"
     with open(snapshot_path, "w") as f:
         yaml.safe_dump(snapshot, f, sort_keys=False)
@@ -222,6 +227,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--config", required=True, help="Model config YAML")
     p.add_argument("--output", required=True, help="Output HDF5 path")
+    p.add_argument("--seed", type=int, default=42, help="Seed for posterior sampling (default: 42)")
+
     return p
 
 

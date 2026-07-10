@@ -105,6 +105,8 @@ def run_evaluate(args: argparse.Namespace) -> None:
     device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"device: {device}")
 
+    torch.manual_seed(args.seed)
+
     bundle = load_checkpoint_bundle(args.checkpoint, config, device)
     val_fold = torch.load(args.checkpoint, map_location=device, weights_only=False)["val_fold"]
     print(f"evaluating on held-out fold {val_fold} (the checkpoint's own validation fold)")
@@ -182,6 +184,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--n-samples", type=int, default=200,
                     help="Posterior samples per event for closure comparison (default: 200)")
     p.add_argument("--batch-size", type=int, default=512)
+    p.add_argument("--seed", type=int, default=42, help="Seed for posterior sampling (default: 42)")
     return p
 
 

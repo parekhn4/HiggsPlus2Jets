@@ -22,9 +22,10 @@ def read_native_reco_arrays(path: str, config: dict) -> dict:
     dataset = config.get("dataset", "delphes")
     branch_names = catalog.resolve_branch_names(NATIVE_RECO_BRANCHES, dataset=dataset)
     tree_name = config["data"]["tree_name"]
+    max_events = config["data"].get("max_events")
 
     with uproot.open(path) as f:
-        arr = f[tree_name].arrays(branch_names, library="ak")
+        arr = f[tree_name].arrays(branch_names, entry_stop=max_events, library="ak")
 
     native_to_branch = dict(zip(NATIVE_RECO_BRANCHES, branch_names))
     return {native: arr[branch] for native, branch in native_to_branch.items()}
