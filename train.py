@@ -3,12 +3,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
 import torch.optim as optim
 import yaml
 
+import plotting
 import preprocessing_training as training
 from sklearn.preprocessing import StandardScaler
 from model import build_model_from_config
@@ -209,6 +211,8 @@ def train(args: argparse.Namespace) -> None:
 
     best_val_loss = float("inf")
     epochs_without_improvement = 0
+    train_loss_history = []
+    val_loss_history = []
 
     n_train = len(X_train_t)
 
@@ -233,6 +237,8 @@ def train(args: argparse.Namespace) -> None:
 
         scheduler.step(val_loss)
         train_loss = float(np.mean(train_losses))
+        train_loss_history.append(train_loss)
+        val_loss_history.append(val_loss)
         print(f"epoch {epoch:4d}  train_nll {train_loss:.4f}  val_nll {val_loss:.4f}")
 
         if val_loss < best_val_loss:
@@ -247,6 +253,13 @@ def train(args: argparse.Namespace) -> None:
                 print(f"early stopping at epoch {epoch} "
                       f"({early_stop_patience} epochs without improvement)")
                 break
+
+    loss_plot_path = Path(args.output).with_name(Path(args.output).stem + "_loss_curve.png")
+    fig = plotting.plot_loss_curve(train_loss_history, val_loss_history,
+                                    title=f"best val_nll {best_val_loss:.4f}")
+    fig.savefig(loss_plot_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote loss curve -> {loss_plot_path}")
 
     print(f"\nDone. Best val_nll: {best_val_loss:.4f}. Checkpoint: {args.output}")
 

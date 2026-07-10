@@ -82,6 +82,21 @@ DEFAULT_PLOT_SPECS = [
 ]
 
 
+def plot_loss_curve(train_losses: list, val_losses: list, title: str | None = None):
+    """Per-epoch train/val NLL curve, for spotting under/overfitting and convergence."""
+    fig, ax = plt.subplots(figsize=(7, 5))
+    epochs = np.arange(len(train_losses))
+    ax.plot(epochs, train_losses, label="train NLL")
+    ax.plot(epochs, val_losses, label="val NLL")
+    ax.set_xlabel("epoch")
+    ax.set_ylabel("NLL")
+    ax.grid(alpha=0.3)
+    ax.legend()
+    if title:
+        ax.set_title(title)
+    return fig
+
+
 def plot_closure(truth_obs: dict, reco_obs: dict, flow_obs: dict,
                   plot_specs=None, title: str | None = None, ncols: int = 3):
     """
