@@ -6,6 +6,16 @@ Usage
         --data-dir Delphes_Data/ \\
         --output four_vectors.h5 \\
         --n-samples 500
+
+Writes ONE self-contained HDF5 file with the full posterior: every sampled
+four-vector for every event, nothing averaged or reduced. Per scenario:
+
+    /{scenario}/four_vectors/{H,j1,j2}   (n_events, n_samples, 4) of (E,px,py,pz)
+    /{scenario}/meta/{event_id,...}      (n_events,) -- one row per event
+
+Each four_vectors dataset carries "value_type" and "fixed_mass" attrs, so
+downstream reduction (see reduce_posterior.py) doesn't need the checkpoint
+or config to know which objects are on a fixed mass shell.
 """
 
 from __future__ import annotations
@@ -14,8 +24,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import h5py
 import numpy as np
-import pandas as pd
 import torch
 import yaml
 
@@ -102,18 +112,25 @@ def sample_posterior_batch(model, X_reco_scaled: np.ndarray, truth_dim: int,
 
     return np.concatenate(all_samples, axis=0)
 
-
 # ──────────────────────────────────────────────────────────────────────────
 # Output assembly
 # ──────────────────────────────────────────────────────────────────────────
 
-def four_vectors_to_dataframe(four_vectors: dict, event_idx: np.ndarray,
-                               sample_idx: np.ndarray) -> pd.DataFrame:
-    cols = {"event_idx": event_idx, "sample_idx": sample_idx}
-    for obj_name, arr in four_vectors.items():
-        for i, comp in enumerate(["E", "px", "py", "pz"]):
-            cols[f"{obj_name}_{comp}"] = arr[:, i]
-    return pd.DataFrame(cols)
+def write_scenario_group(h5file: h5py.File, scenario_name: str, four_vectors: dict,
+                          meta, resolved_truth: dict, n_events: int, n_samples: int) -> None:
+    grp = h5file.create_group(scenario_name)
+
+    fv_grp = grp.create_group("four_vectors")
+    fv_grp.attrs["components"] = "E, px, py, pz"
+    for name, fv in four_vectors.items():
+        ds = fv_grp.create_dataset(name, data=fv.reshape(n_events, n_samples, 4).astype(np.float32))
+        obj_cfg = resolved_truth["objects"][name]
+        ds.attrs["value_type"] = obj_cfg.get("value_type", "fixed")
+        ds.attrs["fixed_mass"] = obj_cfg.get("fixed_mass", 0.0)
+
+    meta_grp = grp.create_group("meta")
+    for col in meta.columns:
+        meta_grp.create_dataset(col, data=meta[col].to_numpy())
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -148,17 +165,19 @@ def run_inference(args: argparse.Namespace) -> None:
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
 
-    with pd.HDFStore(args.output, mode="w") as store:
+    with h5py.File(args.output, "w") as h5file:
         for scenario_name, path in scenario_files.items():
             print(f"\n[{scenario_name}] reading {path}")
             X_reco, meta = inference_prep.build_reco_features(
                 str(path), scenario_name, config, resolved["reco"]
             )
-            print(f"  {len(X_reco)} events pass selection")
+            n_events = len(X_reco)
+            print(f"  {n_events} events pass selection")
 
             X_reco_scaled = inference_prep.apply_reco_scaling(X_reco, scaler)
 
             print(f"  sampling {args.n_samples} posterior draws/event...")
+            torch.manual_seed(args.seed)
             samples_scaled = sample_posterior_batch(
                 model, X_reco_scaled, truth_dim,
                 n_samples_per_event=args.n_samples,
@@ -168,19 +187,9 @@ def run_inference(args: argparse.Namespace) -> None:
 
             four_vectors = kinematics.reconstruct_event(samples, resolved["truth"])
 
-            event_idx = np.repeat(np.arange(len(X_reco)), args.n_samples)
-            sample_idx = np.tile(np.arange(args.n_samples), len(X_reco))
-            df = four_vectors_to_dataframe(four_vectors, event_idx, sample_idx)
-
-            # merge in the AUX_ metadata (already AUX_-prefixed by
-            # build_reco_features), repeated once per posterior sample to
-            # match df's event-major row order -- without this, four_vectors.h5
-            # has no way to trace an unfolded row back to its source event
-            meta_repeated = meta.iloc[event_idx].reset_index(drop=True)
-            df = pd.concat([meta_repeated, df], axis=1)
-
-            store.put(scenario_name, df, format="fixed")
-            print(f"  wrote {len(df)} rows to {args.output}[{scenario_name}]")
+            write_scenario_group(h5file, scenario_name, four_vectors, meta.reset_index(drop=True),
+                                  resolved["truth"], n_events=n_events, n_samples=args.n_samples)
+            print(f"  wrote {n_events} events x {args.n_samples} samples -> {args.output}[{scenario_name}]")
 
     print(f"\nDone. Output: {args.output}")
 
@@ -198,6 +207,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="Posterior samples drawn per event (default: 500)")
     p.add_argument("--batch-size", type=int, default=512,
                     help="Reco events per inference batch, before repeat_interleave (default: 512)")
+    p.add_argument("--seed", type=int, default=42, help="Seed for posterior sampling (default: 42)")
     return p
 
 
