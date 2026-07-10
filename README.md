@@ -37,7 +37,12 @@ able to unfold without that info.
 - `evaluate.py` - like inference but on the held-out validation fold, so you
   can actually check if it's working (closure plots comparing truth vs reco
   vs unfolded).
-- `plotting.py` - the actual plot-drawing code, used by evaluate.py.
+- `validate_unfolding.py` - on the held-out fold, compares the per-event
+  mean vs. the full posterior as ways to collapse the samples: closure
+  plots for both, plus (truth - reco/mean/samples) residual histograms
+  overlaid so you can see which reduction is actually tighter.
+- `plotting.py` - the actual plot-drawing code, used by evaluate.py and
+  validate_unfolding.py.
 
 ## The scalers 
 
@@ -115,6 +120,13 @@ python evaluate.py --checkpoint best_model.pt --config configs/no_energy.yaml --
 This makes one plot per scenario plus one pooled plot (all scenarios
 combined, no CP label) since that pooled one is the closer match to what
 evaluating on real data will actually look like.
+
+5. Compare the mean-vs-full-posterior reduction against truth (held-out fold):
+
+```
+python validate_unfolding.py --checkpoint best_model.pt --config configs/no_energy.yaml \
+    --preprocessed preprocessed.h5 --n-samples 200 --output-dir validation_plots/
+```
 
 ## Adding a new variable to train on
 
