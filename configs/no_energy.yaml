@@ -1,49 +1,29 @@
-# ─────────────────────────────────────────────────────────────────────────
-# Model config: no_energy
-#
-# 12-dim truth (H, j1, j2 kinematics, no energy), 66-dim reco conditioning
-# (diphoton-derived Higgs + up to 12 jets + njet), 24 RQS coupling blocks,
-# pure PyTorch cINN. Fixed masses (m_H = 125, m_j = 0) at 4-vector
-# reconstruction time -- neither truth nor reco carries a learned mass/E.
-#
-# Variables are selected from catalog.py's menu (see catalog.CATALOG for
-# the full list of what's available); dims are DERIVED from this
-# selection at load time (catalog.resolve_object + kinematics.total_dim),
-# never hardcoded here. A future "with_energy" variant is a new file in
-# this directory with different `variables:` lists -- no code changes.
-# ─────────────────────────────────────────────────────────────────────────
-
 name: no_energy
-dataset: delphes                     # -> catalog.SCHEMA_MAP["delphes"]
+dataset: delphes                     
 
 physics:
-  m_H: 125.0                         # H's fixed_mass, used since H has no mass/E variable below
-  m_j: 0.0                           # j1/j2's fixed_mass, same reasoning
+  m_H: 125.0                         
+  m_j: 0.0                           
 
 selection:
   require_2_photons: true
   require_2_reco_jets: true
   use_mass_window: true
-  mass_window_center: 125.0          # GeV, m_gg selection window center
-  mass_window_half_width: 15.0       # GeV, |m_gg - center| < half_width
+  mass_window_center: 125.0          
+  mass_window_half_width: 15.0       
 
 data:
   tree_name: Delphes
   max_jets: 12
-  input_dir: Delphes_Data/           # base dir scenario paths below are relative to
+  input_dir: /Users/nityaansh/Downloads/Unfolding/Delphes_Data
   scenarios:
     at_1_bt_0: at_1_bt_0/tag_1_delphes_events.root
     at_0_bt_1: at_0_bt_1/tag_1_delphes_events.root
     at_1_bt_1: at_1_bt_1/tag_1_delphes_events.root
   seed: 42
   n_folds: 5
-  parton_ordering: pt                # "pt" (training default) or "eta" (CP-convention,
-                                      # forward jet = larger SIGNED eta -- see
-                                      # kinematics.compute_swap_mask's docstring for why
-                                      # this differs from |eta| ordering)
+  parton_ordering: pt                
 
-# Truth (target) -- what the cINN generates. j2 has no `phi` here: the
-# CP-sensitive Delta phi_jj is event-level (see below), not owned by j2.
 truth:
   objects:
     H:
@@ -58,8 +38,6 @@ truth:
   event:
     variables: [dphi_jj]
 
-# Reco (conditioning) -- built from Delphes ROOT branches via
-# preprocessing_inference.py / preprocessing_training.py.
 reco:
   objects:
     H:
@@ -69,23 +47,19 @@ reco:
   event:
     variables: [njet]
 
-# cINN architecture -- must match what a checkpoint was trained with
-# (train.py saves this into the checkpoint's model_config, so a
-# checkpoint is self-describing regardless of what this file says later).
 model:
   coupling: rqs
-  n_blocks: 24
+  n_blocks: 16
   cond_width: 512
   cond_depth: 3
   subnet_width: 256
   spline_bins: 16
   spline_tail: 6.0
-  affine_clamp: 2.0                  # unused by rqs, kept for affine coupling variants
+  affine_clamp: 2.0                  
 
-# Training hyperparameters -- read by train.py.
 training:
   lr: 0.0001
   batch_size: 1024
   max_epochs: 500
-  scheduler_patience: 20
+  scheduler_patience: 10
   early_stop_patience: 40

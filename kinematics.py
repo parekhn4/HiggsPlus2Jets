@@ -86,7 +86,7 @@ def compute_swap_mask(p_pt: np.ndarray, p_eta: np.ndarray, ordering: str) -> np.
         raise ValueError(f"Unknown parton_ordering '{ordering}' -- expected 'pt' or 'eta'")
 
 # ── Full-event reconstruction ──
-def reconstruct_event(samples: np.ndarray, truth_config: dict) -> dict:
+def decode_truth_samples(samples: np.ndarray, truth_config: dict) -> tuple[dict, dict]:
     """
     samples      : (N, truth_dim) unscaled truth array (model output already
                    inverse-transformed out of normalized space)
@@ -95,7 +95,10 @@ def reconstruct_event(samples: np.ndarray, truth_config: dict) -> dict:
                             "fixed_mass": ...}},
         "event":   {"variable_transforms": [...]}   # optional, e.g. dphi_jj
     }
-    Returns {"H": (N,4), "j1": (N,4), "j2": (N,4)} of (E, px, py, pz).
+    Returns (decoded, decoded_event): per-object and event-level physical
+    quantities, *before* four-vectors are built -- this is the point at
+    which posterior samples should be averaged (see average_posterior_samples),
+    since averaging already-built four-vectors is not the same thing.
     """
     objects = truth_config["objects"]
     event_cfg = truth_config.get("event")
@@ -120,12 +123,16 @@ def reconstruct_event(samples: np.ndarray, truth_config: dict) -> dict:
     if offset != samples.shape[-1]:
         raise ValueError(f"truth_config sums to {offset} features but samples has {samples.shape[-1]}")
 
+    return decoded, decoded_event
+
+
+def four_vectors_from_decoded(decoded: dict, decoded_event: dict, objects: dict) -> dict:
+    """Build {"H": (N,4), "j1": (N,4), "j2": (N,4)} of (E, px, py, pz) from decode_truth_samples' output."""
     four_vectors = {}
     phi_j1 = decoded.get("j1", {}).get("phi")
 
     for name, k in decoded.items():
         obj_cfg = objects[name]
-        value_type = obj_cfg.get("value_type", "fixed")
         fixed_mass = obj_cfg.get("fixed_mass", 0.0)
 
         phi = k.get("phi")
@@ -141,6 +148,61 @@ def reconstruct_event(samples: np.ndarray, truth_config: dict) -> dict:
         )
 
     return four_vectors
+
+
+def reconstruct_event(samples: np.ndarray, truth_config: dict) -> dict:
+    """Decode + build four-vectors for every sample, one-to-one (no averaging)."""
+    decoded, decoded_event = decode_truth_samples(samples, truth_config)
+    return four_vectors_from_decoded(decoded, decoded_event, truth_config["objects"])
+
+
+def circular_mean(angles: np.ndarray, axis: int) -> np.ndarray:
+    """Mean of angles handling the +-pi wraparound, via the mean resultant vector."""
+    return np.arctan2(np.mean(np.sin(angles), axis=axis), np.mean(np.cos(angles), axis=axis))
+
+
+def _average_decoded_block(decoded_vals: dict, variable_transforms: list,
+                            n_events: int, n_samples: int) -> dict:
+    transform_of = dict(variable_transforms)
+    out = {}
+    for var, val in decoded_vals.items():
+        val = val.reshape(n_events, n_samples)
+        out[var] = circular_mean(val, axis=1) if transform_of.get(var) == "sin_cos" else np.mean(val, axis=1)
+    return out
+
+
+def average_posterior_samples(samples: np.ndarray, truth_config: dict,
+                               n_events: int, n_samples: int) -> dict:
+    """
+    Collapse n_samples posterior draws/event into one four-vector per event,
+    averaging the *physical quantities* (pt, eta linearly; phi/dphi_jj
+    circularly, since they wrap at +-pi) before four-vectors are built --
+    not averaging already-built (E, px, py, pz) vectors afterward.
+
+    This matters for any fixed-mass object: E is derived there as
+    sqrt(pt^2*cosh(eta)^2 + fixed_mass^2), which is nonlinear in pt/eta, so
+    mean(E_i) != E(mean(pt), mean(eta)) -- averaging four-vectors directly
+    would leave the mean event off-shell even though every individual
+    sample is exactly on-shell. Averaging pt/eta first and building E fresh
+    from the fixed mass guarantees the returned event is on-shell for every
+    fixed-mass object (confirmed against truth for the no-energy model).
+    Objects with a learned "mass" or "energy" value_type aren't
+    constrained this way -- their averaged E/mass is whatever the network
+    produced, since there's no physics constraint to re-derive it from.
+    """
+    decoded, decoded_event = decode_truth_samples(samples, truth_config)
+    objects = truth_config["objects"]
+    event_cfg = truth_config.get("event")
+
+    averaged = {
+        name: _average_decoded_block(decoded[name], objects[name]["variable_transforms"], n_events, n_samples)
+        for name in decoded
+    }
+    averaged_event = (
+        _average_decoded_block(decoded_event, event_cfg["variable_transforms"], n_events, n_samples)
+        if event_cfg is not None else {}
+    )
+    return four_vectors_from_decoded(averaged, averaged_event, objects)
 
 def total_dim(resolved_domain: dict, max_jets: int | None = None) -> int:
     """
