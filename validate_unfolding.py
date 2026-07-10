@@ -7,19 +7,22 @@ Usage
         --n-samples 200 \\
         --output-dir validation_plots/
 
-Compares the two ways of collapsing the posterior into a per-event unfolded
-value -- the on-shell mean (kinematics.average_posterior_samples) vs. the
-full pooled posterior (kinematics.reconstruct_event, every sample kept) --
+Compares three ways of collapsing the posterior into a per-event unfolded
+value: the on-shell mean (kinematics.average_posterior_samples), a single
+random posterior draw per event (kinematics.select_posterior_draw -- no
+reweighting needed, every draw is already unweighted/exact), and the full
+pooled posterior (kinematics.reconstruct_event, every sample kept) --
 against truth and reco, on the checkpoint's own held-out validation fold
 (unlike inference.py's real-data path, truth is available here). Writes,
 per scenario (plus pooled, all scenarios combined):
 
-    closure_mean_{scenario}.pdf     truth/reco/unfolded-mean marginal shapes
-    closure_samples_{scenario}.pdf  truth/reco/unfolded-all-samples marginal shapes
-    error_hist_{scenario}.pdf       per-event (truth - X) residuals, X in
-                                     {reco, unfolded mean, unfolded all samples},
-                                     overlaid so you can see which reduction
-                                     strategy sits tighter around zero
+    closure_mean_{scenario}.pdf        truth/reco/unfolded-mean marginal shapes
+    closure_single_draw_{scenario}.pdf truth/reco/unfolded-single-draw marginal shapes
+    closure_samples_{scenario}.pdf     truth/reco/unfolded-all-samples marginal shapes
+    error_hist_{scenario}.pdf          per-event (truth - X) residuals, X in
+                                        {reco, mean, single draw, all samples},
+                                        overlaid so you can see which reduction
+                                        strategy sits tighter around zero
 """
 
 from __future__ import annotations
@@ -66,6 +69,10 @@ def validate_scenario(scenario: str, df_val: pd.DataFrame, bundle: dict,
     unfolded_mean_fv = kinematics.average_posterior_samples(
         samples, resolved["truth"], n_events=n_events, n_samples=n_samples
     )
+
+    single_draw = kinematics.select_posterior_draw(samples, n_events, n_samples, draw_index=0)
+    unfolded_single_draw_fv = kinematics.reconstruct_event(single_draw, resolved["truth"])
+
     # (n_events*n_samples, 4) -> (n_events, n_samples, 4) per object, so
     # observables built from this come out shaped (n_events, n_samples) --
     # what observable_residual/plot_error_histograms expect for a full posterior
@@ -76,6 +83,7 @@ def validate_scenario(scenario: str, df_val: pd.DataFrame, bundle: dict,
         "truth": kinematics.build_observables(truth_fv),
         "reco": kinematics.build_observables(reco_fv),
         "unfolded_mean": kinematics.build_observables(unfolded_mean_fv),
+        "unfolded_single_draw": kinematics.build_observables(unfolded_single_draw_fv),
         "unfolded_samples": kinematics.build_observables(unfolded_samples_fv),
     }
 
@@ -87,6 +95,14 @@ def write_plots(result: dict, plot_specs: list, error_specs: list,
         plot_specs=plot_specs, title=f"Closure (mean unfolding): {title_suffix}",
     )
     out_path = Path(output_dir) / f"closure_mean_{file_suffix}.pdf"
+    fig.savefig(out_path, bbox_inches="tight")
+    print(f"  wrote {out_path}")
+
+    fig = plotting.plot_closure(
+        result["truth"], result["reco"], result["unfolded_single_draw"],
+        plot_specs=plot_specs, title=f"Closure (single random draw): {title_suffix}",
+    )
+    out_path = Path(output_dir) / f"closure_single_draw_{file_suffix}.pdf"
     fig.savefig(out_path, bbox_inches="tight")
     print(f"  wrote {out_path}")
 
@@ -103,6 +119,7 @@ def write_plots(result: dict, plot_specs: list, error_specs: list,
         [
             (result["reco"], "reco"),
             (result["unfolded_mean"], "unfolded (mean)"),
+            (result["unfolded_single_draw"], "unfolded (single draw)"),
             (result["unfolded_samples"], "unfolded (all samples)"),
         ],
         reference_label="truth", error_specs=error_specs, title=f"Residuals vs truth: {title_suffix}",
@@ -141,7 +158,7 @@ def run_validate(args: argparse.Namespace) -> None:
         ("dphi_eta_ordered", np.linspace(-1.0, 1.0, 41), r"$\Delta\phi_{jj}$ (eta-ordered, CP) residual"),
     ]
 
-    pooled = {"truth": [], "reco": [], "unfolded_mean": [], "unfolded_samples": []}
+    pooled = {"truth": [], "reco": [], "unfolded_mean": [], "unfolded_single_draw": [], "unfolded_samples": []}
 
     for scenario in scenarios:
         print(f"\n[{scenario}]")

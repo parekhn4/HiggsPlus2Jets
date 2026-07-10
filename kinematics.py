@@ -346,6 +346,20 @@ def reco_four_vectors(X_reco: np.ndarray, resolved_reco: dict, max_jets: int) ->
     return {"H": H_fv, "j1": j1_fv, "j2": j2_fv}
 
 
+def select_posterior_draw(samples: np.ndarray, n_events: int, n_samples: int, draw_index: int = 0) -> np.ndarray:
+    """
+    Pick a single posterior draw per event from the flat (n_events*n_samples,
+    truth_dim) sample array, e.g. draw_index=0 selects each event's first
+    draw. sample_posterior_batch draws z ~ N(0,I) independently per row, so
+    every draw is already an unweighted, correctly-distributed sample from
+    that event's posterior -- no importance weight or reranking needed,
+    unlike MCMC/importance-sampling posteriors. Feed the result straight
+    into reconstruct_event to get one four-vector per event.
+    """
+    truth_dim = samples.shape[-1]
+    return samples.reshape(n_events, n_samples, truth_dim)[:, draw_index, :]
+
+
 def build_observables(four_vectors: dict) -> dict:
     """
     Derive the standard closure/residual observable dict (pt/eta per object,
