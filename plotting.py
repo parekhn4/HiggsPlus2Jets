@@ -124,13 +124,17 @@ def plot_error_histograms(reference_obs: dict, comparisons: list,
         stats = []
         for comparison_obs, label in comparisons:
             diff = observable_residual(key, reference_obs[key], comparison_obs[key]).reshape(-1)
-            ax.hist(diff, bins=bins, histtype="step", linewidth=1.5,
+            # density-normalized: comparisons carry wildly different sample
+            # counts (one residual/event for reco/mean vs. one/sample for
+            # the full posterior), so raw counts would just show whichever
+            # has the most points -- only the shape is comparable here
+            ax.hist(diff, bins=bins, density=True, histtype="step", linewidth=1.5,
                     label=f"{reference_label} - {label}")
             stats.append(f"{label}: $\\mu$={diff.mean():.3g}, $\\sigma$={diff.std():.3g}")
         ax.axvline(0.0, color="black", linestyle="--", linewidth=1)
         ax.set_title(f"{xlabel}\n" + "\n".join(stats), fontsize=8)
         ax.set_xlabel(xlabel, fontsize=8)
-        ax.set_ylabel("count", fontsize=8)
+        ax.set_ylabel("density", fontsize=8)
         ax.grid(alpha=0.3)
         ax.legend(fontsize=7)
 
