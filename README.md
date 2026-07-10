@@ -29,8 +29,11 @@ able to unfold without that info.
   config file reading beyond getting told the dims.
 - `train.py` - trains the model, saves a checkpoint that has everything in
   it (weights, scaler, which config built it, which h5 file it trained on).
-- `inference.py` - loads a checkpoint, runs it on new events, spits out
-  unfolded four-vectors.
+- `inference.py` - loads a checkpoint, samples the posterior, writes every
+  sampled four-vector per event to HDF5 (nothing averaged).
+- `reduce_posterior.py` - collapses `inference.py`'s output to one on-shell
+  four-vector per event (mean pt/eta/phi, fixed mass, energy recomputed).
+- `unfold_and_average.py` - runs the two above back to back in one command.
 - `evaluate.py` - like inference but on the held-out validation fold, so you
   can actually check if it's working (closure plots comparing truth vs reco
   vs unfolded).
@@ -86,10 +89,21 @@ python train.py --config configs/no_energy.yaml --preprocessed preprocessed.h5 -
 `--val-fold` picks which of the 5 folds gets held out for validation. Folds
 are assigned once during preprocessing and don't change between runs.
 
-3. Run inference (only needs Photon/Jet branches, works on real data too):
+3. Unfold (only needs Photon/Jet branches, works on real data too). Get the
+   full posterior, the per-event mean, or both in one command:
 
 ```
-python inference.py --checkpoint best_model.pt --config configs/no_energy.yaml --data-dir Delphes_Data/ --output four_vectors.h5 --n-samples 500
+# full posterior: samples.h5[scenario]/four_vectors/{H,j1,j2}, shape (n_events, n_samples, 4)
+python inference.py --checkpoint best_model.pt --config configs/no_energy.yaml \
+    --data-dir Delphes_Data/ --output samples.h5 --n-samples 500 [--batch-size 512] [--seed 42]
+
+# collapse to one on-shell four-vector/event
+python reduce_posterior.py --input samples.h5 --output means.h5
+
+# or both at once (keeps the full-sample file by default; --discard-samples to drop it,
+# --samples-output PATH to control where it's kept)
+python unfold_and_average.py --checkpoint best_model.pt --config configs/no_energy.yaml \
+    --data-dir Delphes_Data/ --output means.h5 --n-samples 500
 ```
 
 4. Check that it actually works (closure plots on the held-out fold):
