@@ -32,15 +32,15 @@ def cinn_nll(model, x_truth, x_reco):
 # ──────────────────────────────────────────────────────────────────────────
 # Scaler fitting — generalized reco/truth scaler fitting.
 #
-# The old notebook's reco scaler fit only on Higgs+njet+jet1 columns, then
-# broadcast jet1's mean/scale to jet slots 2-12 (since most slots are
-# zero-padded and fitting them independently blows up their variance).
-# That trick assumed a fixed-width, fixed-position jet block. With the
-# catalog, jet width is config-dependent, so this generalizes it: find the
-# jet block's layout from resolved_reco (not hardcoded), fit on all
-# non-jet columns plus the first jet slot, broadcast that fit to every
-# other jet slot. Truth scaling has no such special case -- plain
-# StandardScaler.
+# The selection requires >=2 reco jets, so jet slots 1 and 2 are always real
+# data (never zero-padded) -- each gets its own independent fit rather than
+# borrowing another slot's statistics. Jet slots 3+ are mostly zero-padding
+# (only populated for higher jet-multiplicity events), so fitting them
+# independently would blow up their variance; instead they get jet1+jet2
+# pooled together (stacked as more samples of the same "generic jet"
+# distribution) broadcast onto them -- the best available proxy given
+# there's no independently-fittable signal there. Truth scaling has no such
+# special case -- plain StandardScaler.
 # ──────────────────────────────────────────────────────────────────────────
 
 def resolve_reco_layout(resolved_reco: dict, max_jets: int):
@@ -70,25 +70,30 @@ def resolve_reco_layout(resolved_reco: dict, max_jets: int):
 
 def fit_reco_scaler(X_train: np.ndarray, resolved_reco: dict, max_jets: int) -> dict:
     """
-    Fit on non-jet columns (Higgs, event, ...) + first jet slot only;
-    broadcast the first jet slot's stats to every other jet slot.
-    Returns {"mean": (reco_dim,), "scale": (reco_dim,)}.
+    Fit on non-jet columns (Higgs, event, ...) plus jet slots 1 and 2
+    independently (each real, always-present data); jet slots 3+ get
+    jet1+jet2 pooled together broadcast onto them. Returns
+    {"mean": (reco_dim,), "scale": (reco_dim,)}.
     """
     non_jet_slices, jet_width, jet_slot_slices = resolve_reco_layout(resolved_reco, max_jets)
 
+    x_mean = np.zeros(X_train.shape[1], dtype=np.float32)
+    x_scale = np.ones(X_train.shape[1], dtype=np.float32)
+
+    # non-jet columns + jet slots 1 and 2, each fit on its own real data --
+    # combining them in one StandardScaler.fit call is just a code
+    # convenience, since StandardScaler computes each column's mean/std
+    # independently regardless of what else is in the same call.
+    own_fit_slots = jet_slot_slices[:2]
     fit_cols = []
     for s in non_jet_slices:
         fit_cols.extend(range(s.start, s.stop))
-    if jet_slot_slices:
-        first = jet_slot_slices[0]
-        fit_cols.extend(range(first.start, first.stop))
+    for s in own_fit_slots:
+        fit_cols.extend(range(s.start, s.stop))
 
     scaler = StandardScaler()
     scaler.fit(X_train[:, fit_cols])
     fitted_mean, fitted_scale = scaler.mean_, scaler.scale_
-
-    x_mean = np.zeros(X_train.shape[1], dtype=np.float32)
-    x_scale = np.ones(X_train.shape[1], dtype=np.float32)
 
     idx = 0
     for s in non_jet_slices:
@@ -96,12 +101,22 @@ def fit_reco_scaler(X_train: np.ndarray, resolved_reco: dict, max_jets: int) -> 
         x_mean[s] = fitted_mean[idx: idx + w]
         x_scale[s] = fitted_scale[idx: idx + w]
         idx += w
-    if jet_slot_slices:
-        first_mean = fitted_mean[idx: idx + jet_width]
-        first_scale = fitted_scale[idx: idx + jet_width]
-        for s in jet_slot_slices:
-            x_mean[s] = first_mean
-            x_scale[s] = first_scale
+    for s in own_fit_slots:
+        w = s.stop - s.start
+        x_mean[s] = fitted_mean[idx: idx + w]
+        x_scale[s] = fitted_scale[idx: idx + w]
+        idx += w
+
+    # jet slots 3+ get jet1+jet2 pooled (stacked as rows -> more samples of
+    # the same generic-jet distribution), not each slot's own fit
+    remaining_slots = jet_slot_slices[2:]
+    if remaining_slots and own_fit_slots:
+        pooled_rows = np.concatenate([X_train[:, s] for s in own_fit_slots], axis=0)
+        pooled_scaler = StandardScaler()
+        pooled_scaler.fit(pooled_rows)
+        for s in remaining_slots:
+            x_mean[s] = pooled_scaler.mean_
+            x_scale[s] = pooled_scaler.scale_
 
     return {"mean": x_mean, "scale": x_scale}
 
