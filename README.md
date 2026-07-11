@@ -1,11 +1,9 @@
 # HiggsPlus2Jets
 
 Unfolding code for a Hjj analysis. Unfolds Delphes H+2jet events (reco ->
-parton level) using a conditional normalizing flow (cINN), to reconstruct
-CP-sensitive kinematics -- in particular `dphi_jj` -- for a Higgs-top Yukawa
+parton level) using a conditional normalizing flow (cINN), to reconstruct obervables for a Higgs-top Yukawa
 CP measurement. The model is trained on all three EFT scenarios pooled
-together, without a CP-scenario label, since real data won't come labeled
-either.
+together without a CP-scenario label.
 
 ## Setup
 
