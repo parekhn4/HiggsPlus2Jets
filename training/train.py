@@ -29,6 +29,24 @@ def cinn_nll(model, x_truth, x_reco):
     return torch.mean(0.5 * torch.sum(z ** 2, dim=1) - log_det)
 
 
+def compute_eval_nll(model, x_truth: torch.Tensor, x_reco: torch.Tensor, batch_size: int) -> float:
+    """
+    Full-dataset NLL in eval mode (dropout off), batched to bound memory use.
+    Used to get a training-set loss comparable to val_loss (also eval-mode) --
+    the raw per-batch training loss during the optimization step is measured
+    with dropout ON and is not directly comparable to val_loss on its own.
+    """
+    model.eval()
+    total_loss = 0.0
+    n = len(x_truth)
+    with torch.no_grad():
+        for start in range(0, n, batch_size):
+            end = min(start + batch_size, n)
+            batch_loss = cinn_nll(model, x_truth[start:end], x_reco[start:end])
+            total_loss += batch_loss.item() * (end - start)
+    return total_loss / n
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Scaler fitting — generalized reco/truth scaler fitting.
 #
@@ -230,6 +248,7 @@ def train(args: argparse.Namespace) -> None:
     best_val_loss = float("inf")
     epochs_without_improvement = 0
     train_loss_history = []
+    train_eval_loss_history = []
     val_loss_history = []
 
     n_train = len(X_train_t)
@@ -252,12 +271,15 @@ def train(args: argparse.Namespace) -> None:
         model.eval()
         with torch.no_grad():
             val_loss = cinn_nll(model, y_val_t, X_val_t).item()
+        train_eval_loss = compute_eval_nll(model, y_train_t, X_train_t, batch_size)
 
         scheduler.step(val_loss)
         train_loss = float(np.mean(train_losses))
         train_loss_history.append(train_loss)
+        train_eval_loss_history.append(train_eval_loss)
         val_loss_history.append(val_loss)
-        print(f"epoch {epoch:4d}  train_nll {train_loss:.4f}  val_nll {val_loss:.4f}")
+        print(f"epoch {epoch:4d}  train_nll {train_loss:.4f}  "
+              f"train_nll(eval) {train_eval_loss:.4f}  val_nll {val_loss:.4f}")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -273,7 +295,7 @@ def train(args: argparse.Namespace) -> None:
                 break
 
     loss_plot_path = Path(args.output).with_name(Path(args.output).stem + "_loss_curve.png")
-    fig = plotting.plot_loss_curve(train_loss_history, val_loss_history,
+    fig = plotting.plot_loss_curve(train_loss_history, val_loss_history, train_eval_loss_history,
                                     title=f"best val_nll {best_val_loss:.4f}")
     fig.savefig(loss_plot_path, dpi=150, bbox_inches="tight")
     plt.close(fig)

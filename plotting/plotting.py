@@ -147,11 +147,23 @@ def plot_error_histograms(reference_obs: dict, comparisons: list,
     return fig
 
 
-def plot_loss_curve(train_losses: list, val_losses: list, title: str | None = None):
-    """Per-epoch train/val NLL curve, for spotting under/overfitting and convergence."""
+def plot_loss_curve(train_losses: list, val_losses: list, train_eval_losses: list | None = None,
+                     title: str | None = None):
+    """
+    Per-epoch train/val NLL curve, for spotting under/overfitting and
+    convergence. train_losses is measured with dropout ON (the actual
+    optimization signal, noisier/inflated by dropout); val_losses is
+    always dropout-OFF (model.eval()). Those two aren't directly
+    comparable on their own -- pass train_eval_losses (the training set's
+    NLL also measured in eval mode, dropout OFF) to plot an apples-to-apples
+    third curve against val, isolating the real generalization gap from the
+    dropout-inflation artifact.
+    """
     fig, ax = plt.subplots(figsize=(7, 5))
     epochs = np.arange(len(train_losses))
-    ax.plot(epochs, train_losses, label="train NLL")
+    ax.plot(epochs, train_losses, label="train NLL (dropout on)")
+    if train_eval_losses is not None:
+        ax.plot(epochs, train_eval_losses, label="train NLL (eval, dropout off)")
     ax.plot(epochs, val_losses, label="val NLL")
     ax.set_xlabel("epoch")
     ax.set_ylabel("NLL")
