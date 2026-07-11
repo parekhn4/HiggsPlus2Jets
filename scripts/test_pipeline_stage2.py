@@ -9,11 +9,11 @@ import pandas as pd
 import torch
 import yaml
 
-import kinematics
-import preprocessing_training as prep_train
-import preprocessing_inference as prep_inf
-import train as train_module
-from model import build_model_from_config
+import core.kinematics as kinematics
+import training.preprocessing_training as prep_train
+import inference.preprocessing_inference as prep_inf
+import training.train as train_module
+from core.model import build_model_from_config
 
 
 def section(title):
@@ -133,7 +133,7 @@ def main():
 
     # ── 5. checkpoint round-trip through inference.py ────────────────────
     section("5. Load checkpoint via inference.py, run on the same file")
-    from inference import load_checkpoint_bundle, sample_posterior_batch
+    from inference.inference import load_checkpoint_bundle, sample_posterior_batch
     bundle = load_checkpoint_bundle(str(checkpoint_path), config, device)
     print(f"loaded checkpoint: epoch {bundle['epoch']}, val_loss {bundle['val_loss']:.4f}")
     assert bundle["max_jets"] == max_jets

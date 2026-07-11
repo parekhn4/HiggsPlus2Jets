@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
@@ -10,9 +13,9 @@ import yaml
 import argparse
 import datetime
 
-import catalog
-import kinematics
-import preprocessing_inference
+import core.catalog as catalog
+import core.kinematics as kinematics
+import inference.preprocessing_inference as preprocessing_inference
 
 
 # ──────────────────────────────────────────────────────────────────────────

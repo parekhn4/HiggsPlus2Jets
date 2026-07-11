@@ -8,10 +8,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # modules from this repo
-import catalog
-import kinematics
-import preprocessing_inference as prep_inf
-import preprocessing_training as prep_train
+import core.catalog as catalog
+import core.kinematics as kinematics
+import inference.preprocessing_inference as prep_inf
+import training.preprocessing_training as prep_train
 
 
 def section(title):
@@ -128,7 +128,7 @@ def main():
     # ── 7. End-to-end shape check against the model ──────────────────────
     section("7. Model can actually consume this data's dimensions")
     import torch
-    from model import build_model_from_config
+    from core.model import build_model_from_config
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = build_model_from_config(config, target_dim=truth_dim, context_dim=reco_dim, device=device)
 

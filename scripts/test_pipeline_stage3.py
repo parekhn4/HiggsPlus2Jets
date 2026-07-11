@@ -3,7 +3,7 @@ test_pipeline_stage3.py — verify the AUX_ column rename + event_id
 traceability actually works end-to-end, using the real test file.
 
 Usage:
-    python test_pipeline_stage3.py --root-file test.root --config configs/no_energy.yaml
+    python scripts/test_pipeline_stage3.py --root-file test.root --config configs/no_energy.yaml
 """
 
 import sys
@@ -16,12 +16,12 @@ import pandas as pd
 import torch
 import yaml
 
-import kinematics
-import preprocessing_training as prep_train
-import preprocessing_inference as prep_inf
-import train as train_module
-from model import build_model_from_config
-from inference import load_checkpoint_bundle, sample_posterior_batch
+import core.kinematics as kinematics
+import training.preprocessing_training as prep_train
+import inference.preprocessing_inference as prep_inf
+import training.train as train_module
+from core.model import build_model_from_config
+from inference.inference import load_checkpoint_bundle, sample_posterior_batch
 
 
 def section(title):
@@ -126,7 +126,7 @@ def main():
 
     event_idx = np.repeat(np.arange(10), n_samples)
     sample_idx = np.tile(np.arange(n_samples), 10)
-    from inference import four_vectors_to_dataframe
+    from inference.inference import four_vectors_to_dataframe
     df_out = four_vectors_to_dataframe(fv, event_idx, sample_idx)
     meta_repeated = meta_full.iloc[:10].iloc[event_idx].reset_index(drop=True)
     df_out = pd.concat([meta_repeated, df_out], axis=1)

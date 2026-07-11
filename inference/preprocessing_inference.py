@@ -7,8 +7,8 @@ import pandas as pd
 import uproot
 import awkward as ak
 
-import catalog
-import kinematics
+import core.catalog as catalog
+import core.kinematics as kinematics
 
 
 NATIVE_RECO_BRANCHES = [

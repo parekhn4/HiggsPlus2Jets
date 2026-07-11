@@ -1,6 +1,6 @@
 """
 Usage
-    python inference.py \\
+    python inference/inference.py \\
         --checkpoint best_model.pt \\
         --config configs/no_energy.yaml \\
         --data-dir Delphes_Data/ \\
@@ -28,14 +28,16 @@ import argparse
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import h5py
 import numpy as np
 import torch
 import yaml
 
-import kinematics
-import preprocessing_inference as inference_prep
-from model import build_model_from_config
+import core.kinematics as kinematics
+import inference.preprocessing_inference as inference_prep
+from core.model import build_model_from_config
 
 
 # ──────────────────────────────────────────────────────────────────────────

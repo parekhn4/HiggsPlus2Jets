@@ -1,6 +1,6 @@
 """
 Usage
-    python unfold_and_average.py \\
+    python scripts/unfold_and_average.py \\
         --checkpoint best_model.pt \\
         --config configs/no_energy.yaml \\
         --data-dir Delphes_Data/ \\
@@ -32,9 +32,12 @@ computed per-sample rather than from a per-event reduction).
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
-import inference
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import inference.inference as inference
 import reduce_posterior
 
 

@@ -1,8 +1,8 @@
 """
 Usage
-    python reduce_posterior.py --input samples.h5 --output-mean means.h5
-    python reduce_posterior.py --input samples.h5 --output-draw draws.h5
-    python reduce_posterior.py --input samples.h5 --output-mean means.h5 --output-draw draws.h5
+    python scripts/reduce_posterior.py --input samples.h5 --output-mean means.h5
+    python scripts/reduce_posterior.py --input samples.h5 --output-draw draws.h5
+    python scripts/reduce_posterior.py --input samples.h5 --output-mean means.h5 --output-draw draws.h5
 
 Collapses inference.py's full per-event posterior samples into one
 four-vector per event, by whichever of the two methods you ask for (give
@@ -30,12 +30,15 @@ checkpoint or config needed.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import h5py
 import numpy as np
 
-import kinematics
+import core.kinematics as kinematics
 
 
 def average_four_vector_samples(fv: np.ndarray, value_type: str, fixed_mass: float) -> np.ndarray:

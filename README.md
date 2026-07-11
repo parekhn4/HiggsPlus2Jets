@@ -14,39 +14,57 @@ able to unfold without that info.
 
 ## Files
 
-- `catalog.py` - list of physical variables you can train on (pt, eta, phi,
-  mass, E, dphi_jj, njet, ...) and how each one gets encoded (log1p, sin/cos,
-  etc). If you want to add a new variable, this is where it goes.
-- `kinematics.py` - the actual math. delta_phi, four-vector building,
-  encode/decode between physical values and network features. 
-- `preprocessing_inference.py` - ROOT -> reco features only. This is what
-  one would run on real data or any file that doesn't have truth info.
-- `preprocessing_training.py` - ROOT -> reco + truth features, plus a fold
-  column for train/val splitting. Needs the Particle.* branches, so this
-  only works on simulated events. Reuses preprocessing_inference for the
-  reco half instead of redoing that work.
-- `model.py` - the cINN itself (RQS coupling blocks). Pure architecture, no
-  config file reading beyond getting told the dims.
-- `train.py` - trains the model, saves a checkpoint that has everything in
-  it (weights, scaler, which config built it, which h5 file it trained on).
-- `inference.py` - loads a checkpoint, samples the posterior, writes every
-  sampled four-vector per event to HDF5 (nothing averaged).
-- `reduce_posterior.py` - collapses `inference.py`'s output to one
-  four-vector per event, either as the on-shell mean (avg pt/eta/phi, fixed
-  mass, energy recomputed) or a single random posterior draw (already
-  unweighted, no re-derivation needed) -- pick one or both.
-- `unfold_and_average.py` - runs the two above back to back in one command.
-- `evaluate.py` - like inference but on the held-out validation fold, so you
-  can actually check if it's working (closure plots comparing truth vs reco
-  vs unfolded).
-- `validate_unfolding.py` - on the held-out fold, compares mean vs. single
-  draw vs. the full posterior as ways to collapse the samples: closure
-  plots for each, plus (truth - reco/mean/draw/samples) residual histograms
-  overlaid so you can see which reduction is actually tighter. The mean can
-  distort a genuinely multimodal observable (e.g. dphi_jj under a
-  jet-labeling ambiguity) in a way a single draw doesn't.
-- `plotting.py` - the actual plot-drawing code, used by evaluate.py and
-  validate_unfolding.py.
+Grouped by folder, in pipeline order:
+
+- `core/` - shared library code, no CLI of its own.
+  - `catalog.py` - list of physical variables you can train on (pt, eta, phi,
+    mass, E, dphi_jj, njet, ...) and how each one gets encoded (log1p, sin/cos,
+    etc). If you want to add a new variable, this is where it goes.
+  - `kinematics.py` - the actual math. delta_phi, four-vector building,
+    encode/decode between physical values and network features, config-agnostic
+    observable derivation (`build_observables`, `reco_four_vectors`).
+  - `model.py` - the cINN itself (RQS coupling blocks). Pure architecture, no
+    config file reading beyond getting told the dims.
+- `training/`
+  - `preprocessing_training.py` - ROOT -> reco + truth features, plus a fold
+    column for train/val splitting. Needs the Particle.* branches, so this
+    only works on simulated events. Reuses `inference/preprocessing_inference.py`
+    for the reco half instead of redoing that work.
+  - `train.py` - trains the model, saves a checkpoint that has everything in
+    it (weights, scaler, which config built it, which h5 file it trained on),
+    plus a `<checkpoint_stem>_loss_curve.png`.
+- `inference/`
+  - `preprocessing_inference.py` - ROOT -> reco features only. This is what
+    one would run on real data or any file that doesn't have truth info.
+  - `inference.py` - loads a checkpoint, samples the posterior, writes every
+    sampled four-vector per event to HDF5 (nothing averaged).
+- `evaluate/evaluate.py` - like inference but on the held-out validation fold,
+  so you can actually check if it's working (closure plots comparing truth vs
+  reco vs unfolded).
+- `plotting/plotting.py` - the actual plot-drawing code, used by `evaluate.py`
+  and `validate_unfolding.py`.
+- `scripts/` - things you actually run from the CLI, beyond the above.
+  - `reduce_posterior.py` - collapses `inference.py`'s output to one
+    four-vector per event, either as the on-shell mean (avg pt/eta/phi, fixed
+    mass, energy recomputed) or a single random posterior draw (already
+    unweighted, no re-derivation needed) -- pick one or both.
+  - `unfold_and_average.py` - runs `inference.py` + `reduce_posterior.py` back
+    to back in one command.
+  - `validate_unfolding.py` - on the held-out fold, compares mean vs. single
+    draw vs. the full posterior as ways to collapse the samples: closure
+    plots for each, plus (truth - reco/mean/draw/samples) residual histograms
+    overlaid so you can see which reduction is actually tighter. The mean can
+    distort a genuinely multimodal observable (e.g. dphi_jj under a
+    jet-labeling ambiguity) in a way a single draw doesn't.
+  - `test_pipeline*.py` - end-to-end sanity checks against a real ROOT file
+    (branch presence, encode/decode round-trip, model forward/inverse pass).
+
+Model/data outputs (checkpoints, `preprocessed.h5`, plots, unfolded h5 files)
+go under `runs/<date>_<config-name>_<n_blocks>b[_suffix]/` -- gitignored,
+never committed. The folder name is just a mnemonic; checkpoints carry their
+own resolved config/epoch/seed, and `preprocessed.h5` always gets a
+`.config.yaml` snapshot next to it, so real provenance never depends on the
+folder name being complete.
 
 ## The scalers 
 
@@ -83,16 +101,21 @@ tables, matplotlib). One can create a venv and inside it:
 pip install -r requirements.txt
 ```
 
+All commands below assume you're running from the repo root. Output paths in
+these examples are shown as bare filenames for brevity, but in practice they
+should point into a `runs/<date>_<config-name>_<n_blocks>b/` folder (see
+"Files" above) -- e.g. `runs/2026-07-10_no_energy_16b/preprocessed.h5`.
+
 1. Preprocess (needs the full Delphes files with truth branches):
 
 ```
-python preprocessing_training.py --config configs/no_energy.yaml --output preprocessed.h5
+python training/preprocessing_training.py --config configs/no_energy.yaml --output preprocessed.h5
 ```
 
 2. Train:
 
 ```
-python train.py --config configs/no_energy.yaml --preprocessed preprocessed.h5 --output best_model.pt --val-fold 4
+python training/train.py --config configs/no_energy.yaml --preprocessed preprocessed.h5 --output best_model.pt --val-fold 4
 ```
 
 `--val-fold` picks which of the 5 folds gets held out for validation. Folds
@@ -103,28 +126,31 @@ are assigned once during preprocessing and don't change between runs.
 
 ```
 # full posterior: samples.h5[scenario]/four_vectors/unfolded/{H,j1,j2}, shape (n_events, n_samples, 4)
-python inference.py --checkpoint best_model.pt --config configs/no_energy.yaml \
-    --data-dir Delphes_Data/ --output samples.h5 --n-samples 500 [--batch-size 512] [--seed 42]
+python inference/inference.py --checkpoint best_model.pt --config configs/no_energy.yaml \
+    --data-dir Delphes_Data/ --output samples.h5 --n-samples 1 [--batch-size 512] [--seed 42]
 
 # collapse to one four-vector/event -- give one or both output paths
-python reduce_posterior.py --input samples.h5 \
+python scripts/reduce_posterior.py --input samples.h5 \
     --output-mean means.h5 --output-draw draws.h5 [--draw-index 0]
 
 # or both (sampling + reduction) at once (keeps the full-sample file by default;
 # --discard-samples to drop it, --samples-output PATH to control where it's kept)
-python unfold_and_average.py --checkpoint best_model.pt --config configs/no_energy.yaml \
-    --data-dir Delphes_Data/ --output-mean means.h5 --output-draw draws.h5 --n-samples 500
+python scripts/unfold_and_average.py --checkpoint best_model.pt --config configs/no_energy.yaml \
+    --data-dir Delphes_Data/ --output-mean means.h5 --output-draw draws.h5 --n-samples 1
 ```
 
-If you only ever want `--output-draw` (never the mean or full posterior),
-sampling 500/event just to keep 1 is wasteful -- `--n-samples 1` gives the
-identical distribution (draws are i.i.d., no reweighting needed) at a
-fraction of the cost.
+**Use `--n-samples 1` unless you also need `--output-mean` or the full
+posterior itself.** A single draw is already an unweighted, exact sample
+(no reweighting needed), and unlike the mean it provably preserves the
+correct population-level shape when pooled across events -- see
+`validate_unfolding.py` below and `CLAUDE.md` for the full reasoning and
+literature citation. Sampling more than once per event only pays off if
+you're deriving the mean or keeping the full posterior from the same run.
 
 4. Check that it actually works (closure plots on the held-out fold):
 
 ```
-python evaluate.py --checkpoint best_model.pt --config configs/no_energy.yaml --preprocessed preprocessed.h5 --n-samples 200 --output-dir eval_plots/
+python evaluate/evaluate.py --checkpoint best_model.pt --config configs/no_energy.yaml --preprocessed preprocessed.h5 --n-samples 200 --output-dir eval_plots/
 ```
 
 This makes one plot per scenario plus one pooled plot (all scenarios
@@ -134,13 +160,13 @@ evaluating on real data will actually look like.
 5. Compare mean vs. single-draw vs. full-posterior reduction against truth (held-out fold):
 
 ```
-python validate_unfolding.py --checkpoint best_model.pt --config configs/no_energy.yaml \
+python scripts/validate_unfolding.py --checkpoint best_model.pt --config configs/no_energy.yaml \
     --preprocessed preprocessed.h5 --n-samples 200 --output-dir validation_plots/
 ```
 
 ## Adding a new variable to train on
 
-Add it to `catalog.CATALOG` in catalog.py (a few lines - what it's called,
+Add it to `catalog.CATALOG` in `core/catalog.py` (a few lines - what it's called,
 what object(s) it can go on, default encoding). Then just add it to a
 config's `variables:` list for whichever object needs it. Nothing else
 needs to change - dims get recalculated automatically.

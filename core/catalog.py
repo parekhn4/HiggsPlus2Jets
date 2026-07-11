@@ -1,5 +1,5 @@
 from __future__ import annotations
-from kinematics import TRANSFORMS
+from core.kinematics import TRANSFORMS
 
 # The job of this module is to turn the user's variable selection into a concrete model config. It maps a dataset's actual branch names onto the catalog-native names every compute/resolve function in this file works with. The schema map below can be updated for data or any other MC if need be 
 

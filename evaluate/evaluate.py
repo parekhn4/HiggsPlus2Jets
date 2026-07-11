@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
 import torch
 import yaml
 
-import kinematics
-import plotting
-from inference import load_checkpoint_bundle, sample_posterior_batch
-import preprocessing_inference as inference_prep
+import core.kinematics as kinematics
+import plotting.plotting as plotting
+from inference.inference import load_checkpoint_bundle, sample_posterior_batch
+import inference.preprocessing_inference as inference_prep
 
 
 def load_val_fold(preprocessed_path: str, scenario: str, val_fold: int,

@@ -1,6 +1,6 @@
 """
 Usage
-    python validate_unfolding.py \\
+    python scripts/validate_unfolding.py \\
         --checkpoint best_model.pt \\
         --config configs/no_energy.yaml \\
         --preprocessed preprocessed.h5 \\
@@ -28,18 +28,21 @@ per scenario (plus pooled, all scenarios combined):
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
 import torch
 import yaml
 
-import kinematics
-import plotting
-from evaluate import load_val_fold
-from inference import load_checkpoint_bundle, sample_posterior_batch
-import preprocessing_inference as inference_prep
+import core.kinematics as kinematics
+import plotting.plotting as plotting
+from evaluate.evaluate import load_val_fold
+from inference.inference import load_checkpoint_bundle, sample_posterior_batch
+import inference.preprocessing_inference as inference_prep
 
 
 def validate_scenario(scenario: str, df_val: pd.DataFrame, bundle: dict,

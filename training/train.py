@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,10 +13,10 @@ import torch
 import torch.optim as optim
 import yaml
 
-import plotting
-import preprocessing_training as training
+import plotting.plotting as plotting
+import training.preprocessing_training as training
 from sklearn.preprocessing import StandardScaler
-from model import build_model_from_config
+from core.model import build_model_from_config
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -164,7 +167,7 @@ def train(args: argparse.Namespace) -> None:
 
     resolved = training.resolve_config(config)
     max_jets = config["data"]["max_jets"]
-    from kinematics import total_dim
+    from core.kinematics import total_dim
     reco_dim = total_dim(resolved["reco"], max_jets=max_jets)
     truth_dim = total_dim(resolved["truth"], max_jets=max_jets)
     print(f"resolved dims -- reco: {reco_dim}, truth: {truth_dim}, "
