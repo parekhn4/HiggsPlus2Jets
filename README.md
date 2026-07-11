@@ -65,6 +65,13 @@ Grouped by folder, in pipeline order:
     forward/inverse pass, a few real training epochs). Run these after
     touching `catalog.py`/`kinematics.py`/the config schema, before kicking off
     a real training run.
+  - `visualize_model.py` - renders a `torchview` diagram of a checkpoint's
+    architecture (self-contained, rebuilds the model from the checkpoint's own
+    config -- no separate config file needed). `--depth 1` (default) is the only
+    practical setting for a real model; deeper unfolds each block's internal
+    tensor ops and blows up in size (a depth-unlimited render of a 24-block
+    model produced a 978-million-pixel unusable image). Needs `torchview` +
+    graphviz's `dot` binary on PATH.
 
 Model/data outputs (checkpoints, `preprocessed.h5`, plots, unfolded h5 files)
 go under `runs/<date>_<config-name>_<n_blocks>b[_suffix]/` -- gitignored,
