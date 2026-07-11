@@ -44,6 +44,10 @@ Grouped by folder, in pipeline order:
 - `plotting/plotting.py` - the actual plot-drawing code, used by `evaluate.py`
   and `validate_unfolding.py`.
 - `scripts/` - things you actually run from the CLI, beyond the above.
+  - `run_pipeline.py` - runs preprocess -> train -> evaluate -> validate_unfolding
+    end to end, writing everything into one auto-named
+    `runs/<date>_<config-name>_<n_blocks>b/` folder. The quickest way to kick
+    off a full run; see "How to run" below for the individual commands it wraps.
   - `reduce_posterior.py` - collapses `inference.py`'s output to one
     four-vector per event, either as the on-shell mean (avg pt/eta/phi, fixed
     mass, energy recomputed) or a single random posterior draw (already
@@ -56,8 +60,11 @@ Grouped by folder, in pipeline order:
     overlaid so you can see which reduction is actually tighter. The mean can
     distort a genuinely multimodal observable (e.g. dphi_jj under a
     jet-labeling ambiguity) in a way a single draw doesn't.
-  - `test_pipeline*.py` - end-to-end sanity checks against a real ROOT file
-    (branch presence, encode/decode round-trip, model forward/inverse pass).
+  - `test_pipeline.py`, `test_pipeline_stage2.py` - end-to-end sanity checks
+    against a real ROOT file (branch presence, encode/decode round-trip, model
+    forward/inverse pass, a few real training epochs). Run these after
+    touching `catalog.py`/`kinematics.py`/the config schema, before kicking off
+    a real training run.
 
 Model/data outputs (checkpoints, `preprocessed.h5`, plots, unfolded h5 files)
 go under `runs/<date>_<config-name>_<n_blocks>b[_suffix]/` -- gitignored,
@@ -105,6 +112,15 @@ All commands below assume you're running from the repo root. Output paths in
 these examples are shown as bare filenames for brevity, but in practice they
 should point into a `runs/<date>_<config-name>_<n_blocks>b/` folder (see
 "Files" above) -- e.g. `runs/2026-07-10_no_energy_16b/preprocessed.h5`.
+
+**Quickest path for a full training run:** steps 1-4 below (preprocess,
+train, evaluate, validate_unfolding) in one command, auto-named into
+`runs/`:
+```
+python scripts/run_pipeline.py --config configs/no_energy.yaml
+```
+The individual steps, if you want to run them separately or need real
+analysis data unfolded (step 3'):
 
 1. Preprocess (needs the full Delphes files with truth branches):
 
