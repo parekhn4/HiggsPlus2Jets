@@ -3,28 +3,6 @@ Usage
     python scripts/reduce_posterior.py --input samples.h5 --output-mean means.h5
     python scripts/reduce_posterior.py --input samples.h5 --output-draw draws.h5
     python scripts/reduce_posterior.py --input samples.h5 --output-mean means.h5 --output-draw draws.h5
-
-Collapses inference.py's full per-event posterior samples into one
-four-vector per event, by whichever of the two methods you ask for (give
-one or both --output-* paths). Self-contained -- reads only the input file
-(value_type/fixed_mass were stored there as attrs by inference.py), no
-checkpoint or config needed.
-
---output-mean : averages pt/eta linearly and phi circularly (angles wrap
-    at +-pi, a plain mean is wrong there -- see kinematics.circular_mean),
-    then for fixed-mass objects recomputes E from the averaged momenta and
-    the fixed mass, so the result is exactly on-shell (mean(E_i) !=
-    E(mean(pt), mean(eta)) since E is nonlinear in pt/eta -- averaging
-    four-vectors directly would NOT be on-shell even though every
-    individual sample is). Cheapest option, but can distort a genuinely
-    multimodal observable (e.g. dphi_jj when there's a jet-labeling
-    ambiguity) -- see validate_unfolding.py's mean-vs-samples comparison.
---output-draw : keeps a single posterior draw per event (--draw-index,
-    default 0) as-is. No re-derivation needed -- every stored sample is
-    already an unweighted, self-consistent, on-shell four-vector exactly
-    as the model produced it. Unlike the mean, provably preserves the
-    correct population-level shape when many events' single draws are
-    pooled together (see validate_unfolding.py's closure comparison).
 """
 
 from __future__ import annotations

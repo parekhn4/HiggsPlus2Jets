@@ -1,22 +1,6 @@
 """
 Usage
     python scripts/visualize_model.py --checkpoint best_model.pt --output arch.png --depth 1
-
-Renders a torchview diagram of a checkpoint's cINN architecture, rebuilt from
-the checkpoint's own embedded model_config/resolved_config -- no separate
-config file needed, checkpoints are self-contained.
-
---depth controls how far into the module hierarchy to unfold:
-  0  = just the top-level cINN box (input/output shapes only)
-  1  = each ConditioningSubnet/RQSCouplingBlock/Permutation as an opaque box
-       -- the recommended setting for a real (many-block) model
-  2+ = unfolds the actual tensor ops inside each block (Linear layers,
-       softplus, cumsum, ...). Fine for understanding one block's internals
-       on a small/toy model, but explodes for a real model: going from
-       depth=1 to depth=2 was ~60x more pixels on a 2-block toy model, and
-       an un-depth-limited render of a real 24-block model produced a
-       978-million-pixel unusable image. Requires torchview + graphviz's
-       `dot` binary on PATH (`brew install graphviz` or equivalent).
 """
 
 from __future__ import annotations

@@ -1,16 +1,6 @@
 """
 Usage
     python scripts/run_pipeline.py --config configs/no_energy.yaml
-
-Runs the full model-development pipeline end to end: preprocess -> train ->
-evaluate -> validate_unfolding, writing everything into one auto-named
-runs/<date>_<config-name>_<n_blocks>b/ folder (see CLAUDE.md's "Where things
-live"). Calls each stage's existing run function directly -- equivalent to
-running the commands in README.md's "How to run" by hand, one after another.
-
-Does NOT include inference.py/reduce_posterior.py (unfolding new analysis
-data with the resulting checkpoint) -- that's a separate "use an
-already-trained model" step, run manually once you're happy with training.
 """
 
 from __future__ import annotations

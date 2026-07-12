@@ -6,23 +6,6 @@ Usage
         --preprocessed preprocessed.h5 \\
         --n-samples 200 \\
         --output-dir validation_plots/
-
-Compares three ways of collapsing the posterior into a per-event unfolded
-value: the on-shell mean (kinematics.average_posterior_samples), a single
-random posterior draw per event (kinematics.select_posterior_draw -- no
-reweighting needed, every draw is already unweighted/exact), and the full
-pooled posterior (kinematics.reconstruct_event, every sample kept) --
-against truth and reco, on the checkpoint's own held-out validation fold
-(unlike inference.py's real-data path, truth is available here). Writes,
-per scenario (plus pooled, all scenarios combined):
-
-    closure_mean_{scenario}.pdf        truth/reco/unfolded-mean marginal shapes
-    closure_single_draw_{scenario}.pdf truth/reco/unfolded-single-draw marginal shapes
-    closure_samples_{scenario}.pdf     truth/reco/unfolded-all-samples marginal shapes
-    error_hist_{scenario}.pdf          per-event (truth - X) residuals, X in
-                                        {reco, mean, single draw, all samples},
-                                        overlaid so you can see which reduction
-                                        strategy sits tighter around zero
 """
 
 from __future__ import annotations

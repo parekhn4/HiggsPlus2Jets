@@ -3,30 +3,9 @@ Usage
     python scripts/unfold_and_average.py \\
         --checkpoint best_model.pt \\
         --config configs/no_energy.yaml \\
-        --data-dir Delphes_Data/ \\
         --output-mean four_vectors_mean.h5 \\
         --output-draw four_vectors_draw.h5 \\
         --n-samples 500
-
-One-command path from a checkpoint to a per-event four-vector: runs
-inference.py's full posterior sampling, then reduce_posterior.py's
-reduction, back to back. Give one or both of --output-mean/--output-draw.
-Keeps the intermediate full-samples file by default (at 500 samples/event
-it's ~24KB/event -- a few GB for a typical 100k-event scenario, not worth
-throwing away) so the expensive sampling step never has to be re-run just
-to get at the full posterior later; pass --discard-samples if you really
-don't want it.
-
-If you ONLY want --output-draw and never need the mean or the full
-posterior, sampling 500/event just to keep 1 is wasteful -- since draws
-are i.i.d. (no reweighting needed, see kinematics.select_posterior_draw),
-`--n-samples 1` gives the exact same distribution at a fraction of the
-compute/storage. The bigger default only pays for itself when you're also
-deriving the mean or keeping the full posterior from the same run.
-
-Use inference.py + reduce_posterior.py directly instead of this wrapper if
-you need the full per-sample posterior itself (e.g. an optimal observable
-computed per-sample rather than from a per-event reduction).
 """
 
 from __future__ import annotations
@@ -48,7 +27,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--checkpoint", required=True, help="Path to trained model checkpoint (.pt)")
     p.add_argument("--config", required=True,
                     help="Config YAML for data-source specifics (scenario paths, selection, tree_name)")
-    p.add_argument("--data-dir", required=True, help="Directory containing per-scenario Delphes ROOT files")
+    p.add_argument("--data-dir",
+                    help="Directory containing per-scenario Delphes ROOT files. Defaults to the "
+                         "config's own data.input_dir if not given -- only pass this to point at "
+                         "different data than what the config says.")
     p.add_argument("--output-mean", help="Output HDF5 path for the on-shell per-event mean")
     p.add_argument("--output-draw", help="Output HDF5 path for a single random posterior draw per event")
     p.add_argument("--draw-index", type=int, default=0,

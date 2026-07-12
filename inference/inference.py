@@ -3,23 +3,8 @@ Usage
     python inference/inference.py \\
         --checkpoint best_model.pt \\
         --config configs/no_energy.yaml \\
-        --data-dir Delphes_Data/ \\
         --output four_vectors.h5 \\
         --n-samples 500
-
-Writes ONE self-contained HDF5 file with the full posterior: every sampled
-four-vector for every event, nothing averaged or reduced. Per scenario:
-
-    /{scenario}/four_vectors/reco/{H,j1,j2}      (n_events, 4) of (E,px,py,pz)
-    /{scenario}/four_vectors/unfolded/{H,j1,j2}  (n_events, n_samples, 4)
-    /{scenario}/meta/{event_id,...}               (n_events,) -- one row per event
-
-reco and unfolded are both plain four-vectors (config-agnostic -- any
-pt/eta/phi/dphi_jj/etc. derived quantity can be computed from either one the
-same way, see kinematics.build_observables). Each unfolded dataset carries
-"value_type" and "fixed_mass" attrs, so downstream reduction (see
-reduce_posterior.py) doesn't need the checkpoint or config to know which
-objects are on a fixed mass shell.
 """
 
 from __future__ import annotations
@@ -170,9 +155,10 @@ def run_inference(args: argparse.Namespace) -> None:
     print(f"  epoch {bundle['epoch']}, val_loss {bundle['val_loss']:.4f}, "
           f"parton_ordering: {resolved['parton_ordering']}")
 
-    scenario_files = inference_prep.discover_scenario_files(args.data_dir, config)
+    data_dir = args.data_dir or config["data"]["input_dir"]
+    scenario_files = inference_prep.discover_scenario_files(data_dir, config)
     if not scenario_files:
-        print(f"No scenario ROOT files found under {args.data_dir}.", file=sys.stderr)
+        print(f"No scenario ROOT files found under {data_dir}.", file=sys.stderr)
         sys.exit(1)
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
@@ -214,7 +200,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--checkpoint", required=True, help="Path to trained model checkpoint (.pt)")
     p.add_argument("--config", required=True,
                     help="Config YAML for data-source specifics (scenario paths, selection, tree_name)")
-    p.add_argument("--data-dir", required=True, help="Directory containing per-scenario Delphes ROOT files")
+    p.add_argument("--data-dir",
+                    help="Directory containing per-scenario Delphes ROOT files. Defaults to the "
+                         "config's own data.input_dir if not given -- only pass this to point at "
+                         "different data than what the config says.")
     p.add_argument("--output", required=True, help="Output HDF5 path for unfolded four-vectors")
     p.add_argument("--n-samples", type=int, default=500,
                     help="Posterior samples drawn per event (default: 500)")

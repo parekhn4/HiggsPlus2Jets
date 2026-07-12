@@ -1,18 +1,5 @@
 """
-Closure plots comparing hard truth, detector-level reco, and flow (unfolded)
-observables. Ported from the training notebook, "Cell 14: Closure plots".
-
-This is a diagnostic tool for when truth is available (e.g. running the
-model on a held-out validation split during development), not part of
-the plain inference path — Pratik's inference-only ROOT files have no
-truth branches, so these plots aren't part of `inference.py`'s flow.
-Kept here so the repo can grow into full closure-testing later without
-restructuring.
-
-Typical usage, given truth_obs / reco_obs / flow_obs dicts of the form
-{"dphi": array, "H_pt": array, ...} (see kinematics.build_observables() to
-build these from a {"H","j1","j2"} four-vector dict):
-
+Usage
     from plotting import plot_closure
     fig = plot_closure(truth_obs, reco_obs, flow_obs)
     fig.savefig("closure.png")
