@@ -76,11 +76,20 @@ def load_checkpoint_bundle(checkpoint_path: str, config: dict, device: str) -> d
 
 def sample_posterior_batch(model, X_reco_scaled: np.ndarray, truth_dim: int,
                             n_samples_per_event: int, device: str,
-                            batch_size: int = 512, progress_every: int = 5000) -> np.ndarray:
+                            batch_size: int = 512, progress_every: int = 5000,
+                            deterministic: bool = False) -> np.ndarray:
     """
     Batched posterior sampling. Samples are stored sequentially per
     event: event 0's n_samples_per_event draws first, then event 1's,
     etc. Returns SCALED samples -- caller inverts scaling separately.
+
+    deterministic: if True, decode z=0 (the base Gaussian's mean) instead
+    of a random draw -- a fixed, non-stochastic point per event, for
+    comparing against actual posterior sampling. Not the posterior mode
+    or mean in general (nonlinear/multimodal caveats apply); this is a
+    diagnostic, not a recommended reduction method. With this on,
+    n_samples_per_event should normally be 1 -- every "sample" would
+    otherwise be identical.
     """
     model.eval()
     n_events = len(X_reco_scaled)
@@ -97,7 +106,10 @@ def sample_posterior_batch(model, X_reco_scaled: np.ndarray, truth_dim: int,
             xb = torch.tensor(X_reco_scaled[start:end], dtype=torch.float32, device=device)
             xb_rep = xb.repeat_interleave(n_samples_per_event, dim=0)
 
-            z = torch.randn(batch_n * n_samples_per_event, truth_dim, device=device)
+            if deterministic:
+                z = torch.zeros(batch_n * n_samples_per_event, truth_dim, device=device)
+            else:
+                z = torch.randn(batch_n * n_samples_per_event, truth_dim, device=device)
             samples_scaled = model.inverse(z, xb_rep).cpu().numpy()
             all_samples.append(samples_scaled)
 

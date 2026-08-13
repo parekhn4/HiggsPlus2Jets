@@ -31,8 +31,46 @@ def read_native_reco_arrays(path: str, config: dict) -> dict:
     return {native: arr[branch] for native, branch in native_to_branch.items()}
 
 
+def apply_object_quality_cuts(native: dict, config: dict) -> dict:
+    """
+    Filter jets/photons down to quality-passing objects only (pT and |eta|
+    acceptance cuts) *before* anything downstream sees them -- so
+    "require >=2 jets"/"require >=2 photons" and the Higgs/jet construction
+    all operate on quality objects, not on however many raw reconstructed
+    objects Delphes happened to report regardless of how soft or forward
+    they are. Returns a new dict (native itself is not mutated); truth-only
+    keys (e.g. particle_*, present in the training-side native dict) pass
+    through untouched. Config keys default to "no cut" if absent, so a
+    config that doesn't set them behaves exactly as before this existed.
+    """
+    sel = config["selection"]
+    jet_pt_min = sel.get("jet_pt_min", 0.0)
+    jet_eta_max = sel.get("jet_eta_max", float("inf"))
+    photon_pt_min = sel.get("photon_pt_min", 0.0)
+    photon_eta_max = sel.get("photon_eta_max", float("inf"))
+
+    out = dict(native)
+
+    jet_ok = (native["jet_pt"] > jet_pt_min) & (np.abs(native["jet_eta"]) < jet_eta_max)
+    for key in ("jet_pt", "jet_eta", "jet_phi", "jet_mass"):
+        if key in out:
+            out[key] = out[key][jet_ok]
+
+    photon_ok = (native["photon_pt"] > photon_pt_min) & (np.abs(native["photon_eta"]) < photon_eta_max)
+    for key in ("photon_pt", "photon_eta", "photon_phi", "photon_E"):
+        if key in out:
+            out[key] = out[key][photon_ok]
+
+    return out
+
+
 def reco_selection_mask(native: dict, config: dict):
-    """>=2 photons, >=2 jets -- the reco-only cuts. Returns an awkward boolean mask."""
+    """
+    >=2 photons, >=2 jets -- the reco-only cuts. Returns an awkward boolean
+    mask. Assumes native has already been through apply_object_quality_cuts
+    if pT/eta acceptance cuts are configured -- this function only counts,
+    it doesn't filter objects itself.
+    """
     sel = config["selection"]
     n_photons = ak.num(native["photon_pt"])
     n_jets = ak.num(native["jet_pt"])
@@ -131,6 +169,7 @@ def build_reco_features(path: str, sample_name: str, config: dict,
     in isolation.
     """
     native = read_native_reco_arrays(path, config)
+    native = apply_object_quality_cuts(native, config)
     mask = reco_selection_mask(native, config)
     extracted = extract_reco_quantities(native, mask, config)
 

@@ -23,6 +23,10 @@ physics:
 selection:
   require_2_photons: true
   require_2_reco_jets: true
+  jet_pt_min: 25.0
+  jet_eta_max: 4.7
+  photon_pt_min: 25.0
+  photon_eta_max: 4.7
   use_mass_window: true
   mass_window_center: 125.0          # GeV, m_gg selection window center
   mass_window_half_width: 15.0       # GeV, |m_gg - center| < half_width

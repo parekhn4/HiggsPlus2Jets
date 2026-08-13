@@ -50,6 +50,16 @@ DEFAULT_PLOT_SPECS = [
 ]
 
 
+def filter_specs(specs: list, available_keys) -> list:
+    """
+    Keep only (key, ...) spec tuples (plot_specs or error_specs) whose
+    key is in available_keys -- so a config that only trains on some of
+    H/j1/j2 (e.g. higgs_only, jets_only) doesn't try to plot an
+    observable that was never built. See kinematics.available_observable_keys.
+    """
+    return [s for s in specs if s[0] in available_keys]
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Residual / error histograms — per-event fidelity, as opposed to
 # plot_closure's marginal-distribution comparison.
@@ -85,6 +95,27 @@ def observable_residual(key: str, reference: np.ndarray, comparison: np.ndarray)
     if key in ANGULAR_OBSERVABLES:
         return kinematics.delta_phi(reference, comparison)
     return reference - comparison
+
+
+def full_range_error_specs(reference_obs: dict, comparisons: list, error_specs=None) -> list:
+    """
+    Rebuild residual bins spanning the actual observed min/max for each
+    observable, instead of DEFAULT_ERROR_SPECS' fixed windows -- those
+    guess a range (e.g. dphi_jj residual was binned to only +-1) and
+    silently clip any residual outside it. Bin count and xlabel are kept
+    from error_specs; only the edges are recomputed from the data.
+    """
+    if error_specs is None:
+        error_specs = DEFAULT_ERROR_SPECS
+    full_specs = []
+    for key, bins, xlabel in error_specs:
+        n_bins = len(bins) - 1
+        diffs = [observable_residual(key, reference_obs[key], comp[key]).reshape(-1)
+                 for comp, _ in comparisons]
+        all_diffs = np.concatenate(diffs)
+        lo, hi = np.min(all_diffs), np.max(all_diffs)
+        full_specs.append((key, np.linspace(lo, hi, n_bins + 1), xlabel))
+    return full_specs
 
 
 def plot_error_histograms(reference_obs: dict, comparisons: list,

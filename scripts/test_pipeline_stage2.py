@@ -110,17 +110,65 @@ def main():
     X_train_t = torch.tensor(X_train_s, dtype=torch.float32, device=device)
     y_train_t = torch.tensor(y_train_s, dtype=torch.float32, device=device)
 
-    losses = []
+    y_mean_t = torch.tensor(y_scaler["mean"], device=device)
+    y_scale_t = torch.tensor(y_scaler["scale"], device=device)
+    physics_cfg = config.get("physics", {})
+    target_masses = {
+        "H": physics_cfg.get("m_H", 0.0),
+        "j1": physics_cfg.get("m_j", 0.0),
+        "j2": physics_cfg.get("m_j", 0.0),
+    }
+    has_free_energy = any(
+        any(var == "E" for var, _ in obj["variable_transforms"])
+        for obj in resolved["truth"]["objects"].values()
+    )
+
+    # batched, matching train.py's real loop -- a single unbatched step over
+    # the full ~70k-event training set stalled MPS out for `with_energy`
+    # (truth_dim=15, plus the penalty's extra inverse pass): observed stuck
+    # at 5.9% CPU / 19GB mem, never progressing past epoch 0.
+    batch_size = config["training"].get("batch_size", 1024)
+    n_train = len(X_train_t)
+
+    losses, nlls, penalties = [], [], []
     for epoch in range(args.smoke_epochs):
         model.train()
-        optimizer.zero_grad()
-        loss = train_module.cinn_nll(model, y_train_t, X_train_t)
-        loss.backward()
-        optimizer.step()
-        losses.append(loss.item())
-        print(f"  epoch {epoch}: nll = {loss.item():.4f}")
+        perm = torch.randperm(n_train, device=device)
+        epoch_losses, epoch_nlls, epoch_penalties = [], [], []
+        for start in range(0, n_train, batch_size):
+            idx = perm[start:start + batch_size]
+            optimizer.zero_grad()
+            nll = train_module.cinn_nll(model, y_train_t[idx], X_train_t[idx])
+            penalty = train_module.energy_conservation_penalty(
+                model, X_train_t[idx], resolved["truth"], y_mean_t, y_scale_t, target_masses)
+            loss = nll + train_module.ENERGY_PENALTY_WEIGHT * penalty
+            loss.backward()
+            optimizer.step()
+            epoch_losses.append(loss.item())
+            epoch_nlls.append(nll.item())
+            epoch_penalties.append(penalty.item())
+        losses.append(float(np.mean(epoch_losses)))
+        nlls.append(float(np.mean(epoch_nlls)))
+        penalties.append(float(np.mean(epoch_penalties)))
+        print(f"  epoch {epoch}: nll = {nlls[-1]:.4f}  penalty (raw g^2, pre-weight) = {penalties[-1]:.4g}")
 
     assert not any(np.isnan(l) for l in losses), "NaN loss encountered!"
+    assert not any(np.isnan(p) for p in penalties), "NaN energy-conservation penalty encountered!"
+    if has_free_energy:
+        assert any(p != 0.0 for p in penalties), (
+            "config has a free 'E' target but the penalty was identically 0 every epoch -- "
+            "energy_conservation_penalty likely isn't finding any object to penalize"
+        )
+        print(f"OK -- energy-conservation penalty is finite and nonzero (raw g^2 ~ {np.mean(penalties):.4g}, "
+              f"pre-weight -- ENERGY_PENALTY_WEIGHT={train_module.ENERGY_PENALTY_WEIGHT:.1e} "
+              f"gives a weighted contribution ~{train_module.ENERGY_PENALTY_WEIGHT * np.mean(penalties):.4g} "
+              f"vs. nll ~{np.mean(nlls):.4g} -- compare these to judge if the weight needs tuning)")
+    else:
+        assert all(p == 0.0 for p in penalties), (
+            "config has no free 'E' target but the penalty was nonzero -- "
+            "energy_conservation_penalty should be a no-op here"
+        )
+        print("OK -- no truth object has a free 'E' in this config, penalty correctly stayed at 0 (no-op)")
     print(f"OK -- loss is finite across {args.smoke_epochs} epochs "
           f"({'decreasing' if losses[-1] < losses[0] else 'not monotonically decreasing yet -- fine for only a few epochs'})")
 
@@ -149,7 +197,7 @@ def main():
     samples = prep_inf.invert_truth_scaling(samples_scaled, bundle["scaler"])
     fv = kinematics.reconstruct_event(samples, bundle["resolved"]["truth"])
 
-    for obj_name in ("H", "j1", "j2"):
+    for obj_name in bundle["resolved"]["truth"]["objects"]:
         E, px, py, pz = fv[obj_name][:,0], fv[obj_name][:,1], fv[obj_name][:,2], fv[obj_name][:,3]
         pt = np.sqrt(px**2 + py**2)
         print(f"{obj_name} unfolded (untrained model, expect noisy but FINITE): "

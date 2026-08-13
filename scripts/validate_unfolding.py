@@ -65,17 +65,30 @@ def validate_scenario(scenario: str, df_val: pd.DataFrame, bundle: dict,
     unfolded_samples_fv = kinematics.reconstruct_event(samples, resolved["truth"])
     unfolded_samples_fv = {name: fv.reshape(n_events, n_samples, 4) for name, fv in unfolded_samples_fv.items()}
 
+    # diagnostic only -- decode z=0 (the base Gaussian's mean) instead of a
+    # real posterior draw; not a recommended reduction method, see
+    # sample_posterior_batch's docstring for why this isn't the posterior
+    # mode/mean in general
+    zero_scaled = sample_posterior_batch(
+        model, X_reco_scaled, truth_dim, n_samples_per_event=1,
+        device=device, batch_size=batch_size, deterministic=True,
+    )
+    zero_draw = inference_prep.invert_truth_scaling(zero_scaled, scaler)
+    unfolded_zero_fv = kinematics.reconstruct_event(zero_draw, resolved["truth"])
+
     return {
         "truth": kinematics.build_observables(truth_fv),
         "reco": kinematics.build_observables(reco_fv),
         "unfolded_mean": kinematics.build_observables(unfolded_mean_fv),
         "unfolded_single_draw": kinematics.build_observables(unfolded_single_draw_fv),
         "unfolded_samples": kinematics.build_observables(unfolded_samples_fv),
+        "unfolded_zero": kinematics.build_observables(unfolded_zero_fv),
     }
 
 
 def write_plots(result: dict, plot_specs: list, error_specs: list,
-                 output_dir: str, title_suffix: str, file_suffix: str) -> None:
+                 output_dir: str, title_suffix: str, file_suffix: str,
+                 full_range_error_hist: bool = False) -> None:
     fig = plotting.plot_closure(
         result["truth"], result["reco"], result["unfolded_mean"],
         plot_specs=plot_specs, title=f"Closure (mean unfolding): {title_suffix}",
@@ -100,19 +113,41 @@ def write_plots(result: dict, plot_specs: list, error_specs: list,
     fig.savefig(out_path, bbox_inches="tight")
     print(f"  wrote {out_path}")
 
+    fig = plotting.plot_closure(
+        result["truth"], result["reco"], result["unfolded_zero"],
+        plot_specs=plot_specs, title=f"Closure (deterministic z=0, diagnostic only): {title_suffix}",
+    )
+    out_path = Path(output_dir) / f"closure_zero_{file_suffix}.pdf"
+    fig.savefig(out_path, bbox_inches="tight")
+    print(f"  wrote {out_path}")
+
+    comparisons = [
+        (result["reco"], "reco"),
+        (result["unfolded_mean"], "unfolded (mean)"),
+        (result["unfolded_single_draw"], "unfolded (single draw)"),
+        (result["unfolded_samples"], "unfolded (all samples)"),
+        (result["unfolded_zero"], "unfolded (z=0, diagnostic)"),
+    ]
     fig = plotting.plot_error_histograms(
-        result["truth"],
-        [
-            (result["reco"], "reco"),
-            (result["unfolded_mean"], "unfolded (mean)"),
-            (result["unfolded_single_draw"], "unfolded (single draw)"),
-            (result["unfolded_samples"], "unfolded (all samples)"),
-        ],
+        result["truth"], comparisons,
         reference_label="truth", error_specs=error_specs, title=f"Residuals vs truth: {title_suffix}",
     )
     out_path = Path(output_dir) / f"error_hist_{file_suffix}.pdf"
     fig.savefig(out_path, bbox_inches="tight")
     print(f"  wrote {out_path}")
+
+    if full_range_error_hist:
+        # bins spanning the actual observed residual range, not
+        # error_specs' fixed/guessed windows -- see plotting.full_range_error_specs
+        full_specs = plotting.full_range_error_specs(result["truth"], comparisons, error_specs)
+        fig = plotting.plot_error_histograms(
+            result["truth"], comparisons,
+            reference_label="truth", error_specs=full_specs,
+            title=f"Residuals vs truth (full range, not clipped): {title_suffix}",
+        )
+        out_path = Path(output_dir) / f"error_hist_{file_suffix}_corrected.pdf"
+        fig.savefig(out_path, bbox_inches="tight")
+        print(f"  wrote {out_path}")
 
 
 def run_validate(args: argparse.Namespace) -> None:
@@ -143,8 +178,12 @@ def run_validate(args: argparse.Namespace) -> None:
     error_specs = list(plotting.DEFAULT_ERROR_SPECS) + [
         ("dphi_eta_ordered", np.linspace(-1.0, 1.0, 41), r"$\Delta\phi_{jj}$ (eta-ordered, CP) residual"),
     ]
+    available_keys = kinematics.available_observable_keys(bundle["resolved"]["truth"]["objects"])
+    plot_specs = plotting.filter_specs(plot_specs, available_keys)
+    error_specs = plotting.filter_specs(error_specs, available_keys)
 
-    pooled = {"truth": [], "reco": [], "unfolded_mean": [], "unfolded_single_draw": [], "unfolded_samples": []}
+    pooled = {"truth": [], "reco": [], "unfolded_mean": [], "unfolded_single_draw": [], "unfolded_samples": [],
+              "unfolded_zero": []}
 
     for scenario in scenarios:
         print(f"\n[{scenario}]")
@@ -172,7 +211,8 @@ def run_validate(args: argparse.Namespace) -> None:
             for key in obs_dicts[0].keys()
         }
     write_plots(pooled_obs, plot_specs, error_specs, args.output_dir,
-                f"pooled, all scenarios (fold {val_fold})", "pooled")
+                f"pooled, all scenarios (fold {val_fold})", "pooled",
+                full_range_error_hist=True)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

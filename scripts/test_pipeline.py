@@ -113,7 +113,7 @@ def main():
     # ── 6. Physics sanity: reconstruct_event on real truth data ─────────
     section("6. kinematics.reconstruct_event on real truth samples")
     fv = kinematics.reconstruct_event(y_truth, resolved["truth"])
-    for obj_name in ("H", "j1", "j2"):
+    for obj_name in resolved["truth"]["objects"]:
         E, px, py, pz = fv[obj_name][:, 0], fv[obj_name][:, 1], fv[obj_name][:, 2], fv[obj_name][:, 3]
         mass = np.sqrt(np.maximum(E**2 - px**2 - py**2 - pz**2, 0))
         pt = np.sqrt(px**2 + py**2)

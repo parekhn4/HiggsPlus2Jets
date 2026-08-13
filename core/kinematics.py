@@ -363,22 +363,52 @@ def select_posterior_draw(samples: np.ndarray, n_events: int, n_samples: int, dr
 def build_observables(four_vectors: dict) -> dict:
     """
     Derive the standard closure/residual observable dict (pt/eta per object,
-    both dphi_jj conventions, deta) from any {"H","j1","j2"} four-vector
-    set -- reco, truth, or unfolded (a per-event mean or a single posterior
-    sample), doesn't matter which: it's pure kinematics on whatever
-    four-vectors are handed in, so it stays correct regardless of which
-    variables a given config actually trained on.
+    both dphi_jj conventions, deta) from whichever four-vectors are
+    actually present -- reco, truth, or unfolded (a per-event mean or a
+    single posterior sample), doesn't matter which: it's pure kinematics
+    on whatever four-vectors are handed in. Only computes observables for
+    objects present in `four_vectors`, so it stays correct for configs
+    that don't train on all of H/j1/j2 (e.g. higgs_only, jets_only) --
+    see available_observable_keys, which mirrors these same conditions
+    and must be kept in sync.
     """
-    H, j1, j2 = four_vectors["H"], four_vectors["j1"], four_vectors["j2"]
+    obs = {}
+    if "H" in four_vectors:
+        H = four_vectors["H"]
+        obs["H_pt"] = four_vector_pt(H)
+        obs["H_eta"] = four_vector_eta(H)
+        obs["H_phi"] = four_vector_phi(H)
+    if "j1" in four_vectors:
+        obs["j1_pt"] = four_vector_pt(four_vectors["j1"])
+        obs["j1_eta"] = four_vector_eta(four_vectors["j1"])
+    if "j2" in four_vectors:
+        obs["j2_pt"] = four_vector_pt(four_vectors["j2"])
+        obs["j2_eta"] = four_vector_eta(four_vectors["j2"])
+    if "j1" in four_vectors and "j2" in four_vectors:
+        j1, j2 = four_vectors["j1"], four_vectors["j2"]
+        j1_phi, j2_phi = four_vector_phi(j1), four_vector_phi(j2)
+        obs["dphi"] = delta_phi(j1_phi, j2_phi)
+        obs["dphi_eta_ordered"] = eta_ordered_dphi_jj(j1, j2)
+        obs["deta"] = four_vector_eta(j1) - four_vector_eta(j2)
+    return obs
 
-    H_phi = four_vector_phi(H)
-    j1_phi, j2_phi = four_vector_phi(j1), four_vector_phi(j2)
 
-    return {
-        "H_pt": four_vector_pt(H), "H_eta": four_vector_eta(H), "H_phi": H_phi,
-        "j1_pt": four_vector_pt(j1), "j1_eta": four_vector_eta(j1),
-        "j2_pt": four_vector_pt(j2), "j2_eta": four_vector_eta(j2),
-        "dphi": delta_phi(j1_phi, j2_phi),
-        "dphi_eta_ordered": eta_ordered_dphi_jj(j1, j2),
-        "deta": four_vector_eta(j1) - four_vector_eta(j2),
-    }
+def available_observable_keys(truth_objects: dict) -> set[str]:
+    """
+    Which build_observables() keys will actually be populated for a given
+    resolved truth config's objects -- mirrors build_observables' own
+    conditions exactly (kept in sync with it by hand). Lets evaluate.py/
+    validate_unfolding.py filter plot_specs/error_specs down to only the
+    observables a given config (e.g. higgs_only, jets_only) actually
+    produces, instead of assuming H/j1/j2 are all always present.
+    """
+    keys = set()
+    if "H" in truth_objects:
+        keys |= {"H_pt", "H_eta", "H_phi"}
+    if "j1" in truth_objects:
+        keys |= {"j1_pt", "j1_eta"}
+    if "j2" in truth_objects:
+        keys |= {"j2_pt", "j2_eta"}
+    if "j1" in truth_objects and "j2" in truth_objects:
+        keys |= {"dphi", "dphi_eta_ordered", "deta"}
+    return keys

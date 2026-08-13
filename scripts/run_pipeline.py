@@ -50,6 +50,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
     train_module.train(argparse.Namespace(
         config=args.config, preprocessed=str(preprocessed_path),
         output=str(checkpoint_path), val_fold=args.val_fold,
+        residual_penalty_weight=args.residual_penalty_weight,
+        energy_score_weight=args.energy_score_weight,
     ))
 
     section("3. Evaluate (closure plots on held-out fold)")
@@ -82,6 +84,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--run-name", help="Override the auto-derived runs/<name>/ folder name")
     p.add_argument("--runs-dir", default="runs", help="Parent directory for run folders (default: runs/)")
+    p.add_argument("--residual-penalty-weight", type=float, default=0.0,
+                    help="Pass-through to train.py's --residual-penalty-weight (default 0.0 = off)")
+    p.add_argument("--energy-score-weight", type=float, default=0.0,
+                    help="Pass-through to train.py's --energy-score-weight (default 0.0 = off)")
     return p
 
 

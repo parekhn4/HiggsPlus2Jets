@@ -87,6 +87,8 @@ def run_evaluate(args: argparse.Namespace) -> None:
         ("dphi_eta_ordered", np.linspace(-np.pi, np.pi, 20),
          r"$\Delta\phi_{jj}$ (eta-ordered, CP)", r"$\Delta\phi_{jj}$ (CP convention)"),
     ]
+    available_keys = kinematics.available_observable_keys(bundle["resolved"]["truth"]["objects"])
+    plot_specs = plotting.filter_specs(plot_specs, available_keys)
 
     # accumulated across all scenarios, for the pooled plot -- this is the
     # closest proxy to "real data," which won't be separable by CP scenario

@@ -83,10 +83,12 @@ def read_native_arrays(path: str, config: dict) -> dict:
 
 def select_and_extract(native: dict, config: dict) -> dict:
     """
-    Apply selection cuts (>=2 photons, >=2 jets, exactly 1 truth Higgs +
-    2 hard partons, Higgs mass window), pT- or eta-order the partons
-    (per config["data"]["parton_ordering"]), and return plain numpy
-    arrays (post-selection) for everything downstream needs.
+    Apply object-quality cuts (jet/photon pT and |eta| acceptance, via
+    preprocessing_inference.apply_object_quality_cuts) then selection cuts
+    (>=2 quality photons, >=2 quality jets, exactly 1 truth Higgs + 2 hard
+    partons, Higgs mass window), pT- or eta-order the partons (per
+    config["data"]["parton_ordering"]), and return plain numpy arrays
+    (post-selection) for everything downstream needs.
 
     The reco half (Higgs-from-photons, jet padding, njet) is NOT
     duplicated here -- it's the exact same computation
@@ -95,6 +97,8 @@ def select_and_extract(native: dict, config: dict) -> dict:
     preprocessing_inference.reco_selection_mask's cuts and delegates.
     """
     sel = config["selection"]
+
+    native = preprocessing_inference.apply_object_quality_cuts(native, config)
 
     pid = native["particle_pid"]
     status = native["particle_status"]
