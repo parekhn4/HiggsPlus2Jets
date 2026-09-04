@@ -425,9 +425,24 @@ def train(args: argparse.Namespace) -> None:
     X_train, y_train, X_val, y_val = split_by_fold(df, args.val_fold, reco_dim, truth_dim)
     print(f"  train: {len(X_train)}  val (fold {args.val_fold}): {len(X_val)}")
 
-    print("fitting scalers on training fold only...")
-    x_scaler = fit_reco_scaler(X_train, resolved["reco"], max_jets)
-    y_scaler = fit_truth_scaler(y_train)
+    resume_ckpt = None
+    if getattr(args, "resume_from", None):
+        print(f"resuming from {args.resume_from}")
+        resume_ckpt = torch.load(args.resume_from, map_location=device, weights_only=False)
+
+    if resume_ckpt is not None:
+        # the model's weights are tied to whatever scaler produced the numbers it was
+        # trained on -- reuse the checkpoint's own scaler exactly, don't refit (see
+        # CLAUDE.md "Scalers are fit once ... never refit"), even though refitting on
+        # the same training fold with the same code would very likely give identical
+        # numbers -- no reason to rely on that when the real scaler is right there.
+        print("reusing scaler from checkpoint (not refitting)")
+        x_scaler = {"mean": resume_ckpt["x_mean"], "scale": resume_ckpt["x_scale"]}
+        y_scaler = {"mean": resume_ckpt["y_mean"], "scale": resume_ckpt["y_scale"]}
+    else:
+        print("fitting scalers on training fold only...")
+        x_scaler = fit_reco_scaler(X_train, resolved["reco"], max_jets)
+        y_scaler = fit_truth_scaler(y_train)
 
     def scale_x(X):
         return (X - x_scaler["mean"]) / x_scaler["scale"]
@@ -447,6 +462,16 @@ def train(args: argparse.Namespace) -> None:
         patience=config["training"].get("scheduler_patience", 20),
         factor=0.5,
     )
+
+    start_epoch = 0
+    best_val_loss = float("inf")
+    if resume_ckpt is not None:
+        model.load_state_dict(resume_ckpt["model_state_dict"])
+        optimizer.load_state_dict(resume_ckpt["optimizer_state_dict"])
+        scheduler.load_state_dict(resume_ckpt["scheduler_state_dict"])
+        start_epoch = resume_ckpt["epoch"] + 1
+        best_val_loss = resume_ckpt["val_loss"]
+        print(f"  resuming at epoch {start_epoch}, best_val_loss so far {best_val_loss:.4f}")
 
     X_train_t = torch.tensor(X_train_s, device=device)
     y_train_t = torch.tensor(y_train_s, device=device)
@@ -468,7 +493,6 @@ def train(args: argparse.Namespace) -> None:
     max_epochs = config["training"].get("max_epochs", 500)
     early_stop_patience = config["training"].get("early_stop_patience", 40)
 
-    best_val_loss = float("inf")
     epochs_without_improvement = 0
     train_loss_history = []
     train_eval_loss_history = []
@@ -483,7 +507,9 @@ def train(args: argparse.Namespace) -> None:
                           "different formulations of the same idea -- use one, not both, "
                           "so results stay attributable to a single change.")
 
-    for epoch in range(max_epochs):
+    skip_eval_sweep = getattr(args, "skip_eval_sweep", False)
+
+    for epoch in range(start_epoch, max_epochs):
         model.train()
         perm = torch.randperm(n_train, device=device)
         train_losses, train_nlls, train_penalties, train_residuals = [], [], [], []
@@ -534,20 +560,28 @@ def train(args: argparse.Namespace) -> None:
                 val_residual = val_residual.item()
             val_loss = val_loss.item()
             val_nll, val_penalty = val_nll.item(), val_penalty.item()
-        train_eval_loss = compute_eval_nll(model, y_train_t, X_train_t, batch_size)
+        # compute_eval_nll does one extra full forward-only sweep of the entire training
+        # set every epoch, purely for the diagnostic eval-mode-vs-dropout comparison (see
+        # its own docstring) -- ~20-25% of per-epoch time on a large dataset. --skip-eval-
+        # sweep drops it when that diagnostic isn't needed; train_eval_loss_history is left
+        # empty in that case rather than filled with a placeholder, and plot_loss_curve
+        # already treats a falsy train_eval_losses as "don't plot this curve."
+        train_eval_loss = None if skip_eval_sweep else compute_eval_nll(model, y_train_t, X_train_t, batch_size)
 
         scheduler.step(val_loss)
         train_loss = float(np.mean(train_losses))
         train_loss_history.append(train_loss)
-        train_eval_loss_history.append(train_eval_loss)
+        if train_eval_loss is not None:
+            train_eval_loss_history.append(train_eval_loss)
         val_loss_history.append(val_loss)
         residual_str = ""
         if residual_weight or energy_score_weight:
             residual_str = (f"  train_residual {np.mean(train_residuals):.4f}  "
                              f"val_residual {val_residual:.4f}")
+        eval_str = "skipped" if train_eval_loss is None else f"{train_eval_loss:.4f}"
         print(f"epoch {epoch:4d}  train_nll {np.mean(train_nlls):.4f}  "
               f"train_penalty {np.mean(train_penalties):.6f}  "
-              f"train_nll(eval) {train_eval_loss:.4f}  "
+              f"train_nll(eval) {eval_str}  "
               f"val_nll {val_nll:.4f}  val_penalty {val_penalty:.6f}{residual_str}  val_loss {val_loss:.4f}")
 
         if val_loss < best_val_loss:
@@ -566,7 +600,8 @@ def train(args: argparse.Namespace) -> None:
                 break
 
     loss_plot_path = Path(args.output).with_name(Path(args.output).stem + "_loss_curve.png")
-    fig = plotting.plot_loss_curve(train_loss_history, val_loss_history, train_eval_loss_history,
+    fig = plotting.plot_loss_curve(train_loss_history, val_loss_history,
+                                    train_eval_loss_history or None,
                                     title=f"best val_nll {best_val_loss:.4f}")
     fig.savefig(loss_plot_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -607,6 +642,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--preprocessed", required=True, help="Preprocessed HDF5 from preprocessing_training.py")
     p.add_argument("--output", required=True, help="Checkpoint output path (.pt)")
     p.add_argument("--val-fold", type=int, default=4, help="Which fold to hold out for validation")
+    p.add_argument("--resume-from", default=None,
+                    help="Checkpoint to resume from -- reloads model/optimizer/scheduler state, "
+                         "the starting epoch, best_val_loss, and the original scaler (never "
+                         "refit). Per-epoch loss-curve history before the resume point is NOT "
+                         "recovered from the checkpoint (only epoch/val_loss are saved, not the "
+                         "full history) -- the final loss curve plot will only cover epochs from "
+                         "the resume point onward.")
+    p.add_argument("--skip-eval-sweep", action="store_true",
+                    help="Skip the extra full-training-set eval-mode NLL sweep each epoch "
+                         "(~20-25%% of per-epoch time on a large dataset) -- purely a diagnostic "
+                         "for isolating dropout noise from real generalization gap, doesn't "
+                         "affect what the model learns. train_nll(eval) is omitted from the log "
+                         "and its loss-curve line when set.")
     p.add_argument("--residual-penalty-weight", type=float, default=0.0,
                     help="Weight on residual_agreement_penalty (raw per-draw MSE to truth, scaled "
                          "feature space). Default 0.0 = off. See the penalty's module docstring for "
