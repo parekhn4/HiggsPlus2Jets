@@ -178,6 +178,14 @@ def run_validate(args: argparse.Namespace) -> None:
     error_specs = list(plotting.DEFAULT_ERROR_SPECS) + [
         ("dphi_eta_ordered", np.linspace(-1.0, 1.0, 41), r"$\Delta\phi_{jj}$ (eta-ordered, CP) residual"),
     ]
+
+    m = args.bin_multiplier
+    if m != 1:
+        plot_specs = [(key, np.linspace(bins[0], bins[-1], (len(bins) - 1) * m + 1), xlabel, subtitle)
+                      for key, bins, xlabel, subtitle in plot_specs]
+        error_specs = [(key, np.linspace(bins[0], bins[-1], (len(bins) - 1) * m + 1), xlabel)
+                       for key, bins, xlabel in error_specs]
+
     available_keys = kinematics.available_observable_keys(bundle["resolved"]["truth"]["objects"])
     plot_specs = plotting.filter_specs(plot_specs, available_keys)
     error_specs = plotting.filter_specs(error_specs, available_keys)
@@ -227,6 +235,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="Posterior samples per event (default: 200)")
     p.add_argument("--batch-size", type=int, default=512)
     p.add_argument("--seed", type=int, default=42, help="Seed for posterior sampling (default: 42)")
+    p.add_argument("--bin-multiplier", type=int, default=1,
+                    help="Multiply every plot_specs/error_specs bin count by this factor, "
+                         "keeping the same range (default 1 = unchanged DEFAULT_PLOT_SPECS/"
+                         "DEFAULT_ERROR_SPECS binning).")
     return p
 
 

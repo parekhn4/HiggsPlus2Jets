@@ -120,7 +120,8 @@ def full_range_error_specs(reference_obs: dict, comparisons: list, error_specs=N
 
 def plot_error_histograms(reference_obs: dict, comparisons: list,
                            reference_label: str = "truth",
-                           error_specs=None, title: str | None = None, ncols: int = 3):
+                           error_specs=None, title: str | None = None, ncols: int = 3,
+                           density: bool = True):
     """
     Grid of (reference - comparison) residual histograms, one panel per
     observable, with every (comparison_obs, label) pair in `comparisons`
@@ -129,6 +130,15 @@ def plot_error_histograms(reference_obs: dict, comparisons: list,
          (samples_obs, "unfolded (all samples)")]
     to directly compare which reduction strategy sits tighter around zero,
     rather than plot_closure's marginal-shape comparison.
+
+    density=True (default) normalizes each curve independently to integrate
+    to 1 -- needed when comparisons carry different sample counts (one
+    residual/event for reco/mean vs. one/sample for the full posterior), so
+    raw counts would just show whichever has the most points. Pass
+    density=False for a raw-count comparison when every comparison shares
+    the same underlying sample count (e.g. reco vs. a single draw, both
+    exactly one residual/event) and the actual counts matter more than
+    shape alone.
     """
     if error_specs is None:
         error_specs = DEFAULT_ERROR_SPECS
@@ -142,17 +152,13 @@ def plot_error_histograms(reference_obs: dict, comparisons: list,
         stats = []
         for comparison_obs, label in comparisons:
             diff = observable_residual(key, reference_obs[key], comparison_obs[key]).reshape(-1)
-            # density-normalized: comparisons carry wildly different sample
-            # counts (one residual/event for reco/mean vs. one/sample for
-            # the full posterior), so raw counts would just show whichever
-            # has the most points -- only the shape is comparable here
-            ax.hist(diff, bins=bins, density=True, histtype="step", linewidth=1.5,
+            ax.hist(diff, bins=bins, density=density, histtype="step", linewidth=1.5,
                     label=f"{reference_label} - {label}")
             stats.append(f"{label}: $\\mu$={diff.mean():.3g}, $\\sigma$={diff.std():.3g}")
         ax.axvline(0.0, color="black", linestyle="--", linewidth=1)
         ax.set_title(f"{xlabel}\n" + "\n".join(stats), fontsize=8)
         ax.set_xlabel(xlabel, fontsize=8)
-        ax.set_ylabel("density", fontsize=8)
+        ax.set_ylabel("density" if density else "count", fontsize=8)
         ax.grid(alpha=0.3)
         ax.legend(fontsize=7)
 
