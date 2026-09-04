@@ -12,6 +12,16 @@ SCHEMA_MAP = {
         "particle_pt": "Particle.PT", "particle_eta": "Particle.Eta",
         "particle_phi": "Particle.Phi", "particle_mass": "Particle.Mass",
     },
+    # Pratik's larger-statistics production (fromPratik_sim_delphes/, tree "Events") --
+    # reco branch names only (jet_mass/photon_E remap; the rest already match). Truth
+    # is a structurally different layout (flat higgs_*, always-2 hsjet_*, no Particle.PID/
+    # Status collection to mask) with no equivalent to remap here -- read directly by
+    # training.preprocessing_training.read_native_arrays_pratik instead of through this map.
+    "pratik": {
+        "jet_pt": "jet_pt", "jet_eta": "jet_eta", "jet_phi": "jet_phi", "jet_mass": "jet_m",
+        "photon_pt": "phot_pt", "photon_eta": "phot_eta",
+        "photon_phi": "phot_phi", "photon_E": "phot_e",
+    },
 }
 
 def resolve_branch_names(native_names: list[str], dataset: str = "delphes") -> list[str]:

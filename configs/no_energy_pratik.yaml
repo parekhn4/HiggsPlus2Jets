@@ -1,0 +1,69 @@
+name: no_energy_pratik
+dataset: pratik
+
+physics:
+  m_H: 125.0
+  m_j: 0.0
+
+selection:
+  require_2_photons: true
+  require_2_reco_jets: true
+  jet_pt_min: 25.0
+  jet_eta_max: 4.7
+  photon_pt_min: 25.0
+  photon_eta_max: 4.7
+  use_mass_window: true
+  mass_window_center: 125.0
+  mass_window_half_width: 15.0
+
+data:
+  tree_name: Events
+  max_jets: 12
+  input_dir: /Users/nityaansh/Downloads/Unfolding/HiggsPlus2Jets/fromPratik_sim_delphes
+  scenarios:
+    at_1_bt_0: at_1_bt_0/trainval_merged.root
+    at_0_bt_1: at_0_bt_1/trainval_merged.root
+    at_1_bt_1: at_1_bt_1/trainval_merged.root
+  seed: 42
+  n_folds: 5
+  parton_ordering: pt
+
+truth:
+  objects:
+    H:
+      variables: [pt, eta, phi]
+      fixed_mass: 125.0
+    j1:
+      variables: [pt, eta, phi]
+      fixed_mass: 0.0
+    j2:
+      variables: [pt, eta]
+      fixed_mass: 0.0
+  event:
+    variables: [dphi_jj]
+
+reco:
+  objects:
+    H:
+      variables: [pt, eta, phi, mass]
+    jet:
+      variables: [pt, eta, phi, mass]
+  event:
+    variables: [njet]
+
+model:
+  coupling: rqs
+  n_blocks: 16
+  cond_width: 512
+  cond_depth: 3
+  subnet_width: 256
+  spline_bins: 16
+  spline_tail: 6.0
+  affine_clamp: 2.0
+
+training:
+  lr: 0.0001
+  batch_size: 1024
+  max_epochs: 2000
+  scheduler_patience: 10
+  early_stop_patience: 40

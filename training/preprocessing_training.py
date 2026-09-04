@@ -158,6 +158,97 @@ def select_and_extract(native: dict, config: dict) -> dict:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Pratik's larger-statistics production (dataset: "pratik") -- structurally
+# different truth layout (flat higgs_*, always-exactly-2 hsjet_*, no
+# Particle.PID/Status collection to mask), so it gets its own read/extract
+# pair rather than reusing read_native_arrays/select_and_extract above. The
+# reco half is NOT duplicated -- same reasoning as select_and_extract's own
+# docstring: preprocessing_inference already does it, and does it once.
+# ──────────────────────────────────────────────────────────────────────────
+
+NATIVE_TRUTH_BRANCHES_PRATIK = [
+    "hsjet_pt", "hsjet_eta", "hsjet_phi", "hsjet_m",
+    "higgs_pt", "higgs_eta", "higgs_phi", "higgs_m",
+]
+
+
+def read_native_arrays_pratik(path: str, config: dict) -> dict:
+    """
+    ROOT -> {native_name: awkward array} for the pratik schema. Reco branches
+    reused unchanged from preprocessing_inference (dataset: "pratik" in
+    core.catalog.SCHEMA_MAP handles the jet_m/phot_e-style renames); truth
+    branches read directly by their real names -- hsjet_pid/higgs_pid aren't
+    included since both collections are already pre-filtered to exactly the
+    particles we want (light quarks/gluons, and the Higgs) with no PID/status
+    masking needed, unlike the old Particle.PID+Status approach.
+    """
+    native = dict(preprocessing_inference.read_native_reco_arrays(path, config))
+    tree_name = config["data"]["tree_name"]
+    max_events = config["data"].get("max_events")
+    with uproot.open(path) as f:
+        truth_arr = f[tree_name].arrays(NATIVE_TRUTH_BRANCHES_PRATIK, entry_stop=max_events, library="ak")
+    for branch in NATIVE_TRUTH_BRANCHES_PRATIK:
+        native[branch] = truth_arr[branch]
+    return native
+
+
+def select_and_extract_pratik(native: dict, config: dict) -> dict:
+    """
+    Pratik-schema equivalent of select_and_extract: object-quality + event
+    selection cuts are identical (delegated to preprocessing_inference, same
+    as the old-schema path); truth extraction is a rename + pT-ordering swap
+    only, since hsjet_pt/eta/phi/m is already always exactly 2/event and
+    higgs_pt/eta/phi/m is already always exactly 1/event, flat, per
+    CLAUDE.md's "New data source" schema notes -- no PID/status masking or
+    multiplicity check needed the way the old Particle-collection format
+    required.
+    """
+    native = preprocessing_inference.apply_object_quality_cuts(native, config)
+    mask = preprocessing_inference.reco_selection_mask(native, config)
+
+    reco = preprocessing_inference.extract_reco_quantities(native, mask, config)
+    mass_ok = reco["mass_ok"]
+
+    # ── truth Higgs -- already flat, 1/event ──
+    h_true_pt = ak.to_numpy(native["higgs_pt"][mask])[mass_ok]
+    h_true_eta = ak.to_numpy(native["higgs_eta"][mask])[mass_ok]
+    h_true_phi = ak.to_numpy(native["higgs_phi"][mask])[mass_ok]
+    h_true_mass = ak.to_numpy(native["higgs_m"][mask])[mass_ok]
+    h_true_E = np.sqrt((h_true_pt * np.cosh(h_true_eta)) ** 2 + h_true_mass ** 2)
+
+    # ── truth partons -- already exactly 2/event, ordered per config ──
+    p_pt = ak.to_numpy(native["hsjet_pt"][mask])[mass_ok]
+    p_eta = ak.to_numpy(native["hsjet_eta"][mask])[mass_ok]
+    p_phi = ak.to_numpy(native["hsjet_phi"][mask])[mass_ok]
+    p_mass = ak.to_numpy(native["hsjet_m"][mask])[mass_ok]
+
+    ordering = config["data"].get("parton_ordering", "pt")
+    swap = kinematics.compute_swap_mask(p_pt, p_eta, ordering)
+    for a in (p_pt, p_eta, p_phi, p_mass):
+        tmp = a[swap, 0].copy()
+        a[swap, 0] = a[swap, 1]
+        a[swap, 1] = tmp
+
+    p_E = np.sqrt((p_pt * np.cosh(p_eta)) ** 2 + p_mass ** 2)
+    dphi_jj = kinematics.delta_phi(p_phi[:, 0], p_phi[:, 1])
+
+    return {
+        "n_events": reco["n_events"],
+        "event_id": reco["event_id"],
+        "H_reco": reco["H_reco"],
+        "jet_reco": reco["jet_reco"],
+        "event_reco": reco["event_reco"],
+        "H_truth": {"pt": h_true_pt, "eta": h_true_eta, "phi": h_true_phi,
+                     "mass": h_true_mass, "E": h_true_E},
+        "j1_truth": {"pt": p_pt[:, 0], "eta": p_eta[:, 0], "phi": p_phi[:, 0],
+                      "mass": p_mass[:, 0], "E": p_E[:, 0]},
+        "j2_truth": {"pt": p_pt[:, 1], "eta": p_eta[:, 1],
+                      "mass": p_mass[:, 1], "E": p_E[:, 1]},
+        "event_truth": {"dphi_jj": dphi_jj},
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Folds — assigned once, persisted, never recomputed
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -173,8 +264,13 @@ def assign_folds(n_events: int, n_folds: int, seed: int) -> np.ndarray:
 # ──────────────────────────────────────────────────────────────────────────
 
 def build_scenario(path: str, sample_name: str, config: dict, resolved: dict) -> pd.DataFrame:
-    native = read_native_arrays(path, config)
-    extracted = select_and_extract(native, config)
+    dataset = config.get("dataset", "delphes")
+    if dataset == "pratik":
+        native = read_native_arrays_pratik(path, config)
+        extracted = select_and_extract_pratik(native, config)
+    else:
+        native = read_native_arrays(path, config)
+        extracted = select_and_extract(native, config)
     max_jets = config["data"]["max_jets"]
 
     X_reco = kinematics.encode_domain(extracted, resolved["reco"], "reco", max_jets=max_jets)
