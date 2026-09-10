@@ -471,7 +471,9 @@ def train(args: argparse.Namespace) -> None:
         scheduler.load_state_dict(resume_ckpt["scheduler_state_dict"])
         start_epoch = resume_ckpt["epoch"] + 1
         best_val_loss = resume_ckpt["val_loss"]
-        print(f"  resuming at epoch {start_epoch}, best_val_loss so far {best_val_loss:.4f}")
+        resumed_no_improve = resume_ckpt.get("epochs_without_improvement", 0)
+        print(f"  resuming at epoch {start_epoch}, best_val_loss so far {best_val_loss:.4f}, "
+              f"epochs_without_improvement {resumed_no_improve}")
 
     X_train_t = torch.tensor(X_train_s, device=device)
     y_train_t = torch.tensor(y_train_s, device=device)
@@ -493,7 +495,7 @@ def train(args: argparse.Namespace) -> None:
     max_epochs = config["training"].get("max_epochs", 500)
     early_stop_patience = config["training"].get("early_stop_patience", 40)
 
-    epochs_without_improvement = 0
+    epochs_without_improvement = resume_ckpt.get("epochs_without_improvement", 0) if resume_ckpt is not None else 0
     train_loss_history = []
     train_eval_loss_history = []
     val_loss_history = []
@@ -508,6 +510,14 @@ def train(args: argparse.Namespace) -> None:
                           "so results stay attributable to a single change.")
 
     skip_eval_sweep = getattr(args, "skip_eval_sweep", False)
+
+    # written every epoch (not just on improvement) so a wall-time-limited job can be
+    # resumed from the TRUE last epoch, not from the last improvement -- see
+    # scripts/hpcc/ notes. The best-val checkpoint stays at args.output as before.
+    latest_path = str(Path(args.output).with_name(Path(args.output).stem + "_latest.pt"))
+    done_path = str(Path(args.output).with_name(Path(args.output).stem + ".done"))
+    Path(done_path).unlink(missing_ok=True)  # clear any stale sentinel from a prior run
+    penalty_type = "mse" if residual_weight else ("energy_score" if energy_score_weight else None)
 
     for epoch in range(start_epoch, max_epochs):
         model.train()
@@ -589,16 +599,25 @@ def train(args: argparse.Namespace) -> None:
             epochs_without_improvement = 0
             save_checkpoint(args.output, model, optimizer, scheduler, epoch, val_loss,
                              config, resolved, x_scaler, y_scaler, args.val_fold,
-                             residual_weight or energy_score_weight,
-                             "mse" if residual_weight else ("energy_score" if energy_score_weight else None))
+                             residual_weight or energy_score_weight, penalty_type)
             print(f"  -> saved checkpoint (val_loss {val_loss:.4f})")
         else:
             epochs_without_improvement += 1
-            if epochs_without_improvement >= early_stop_patience:
-                print(f"early stopping at epoch {epoch} "
-                      f"({early_stop_patience} epochs without improvement)")
-                break
 
+        # resumption checkpoint: TRUE last epoch, best-so-far val_loss, live early-stop
+        # counter -- so a job killed at the wall-time limit resumes exactly where it
+        # stopped rather than redoing every epoch since the last improvement.
+        save_checkpoint(latest_path, model, optimizer, scheduler, epoch, best_val_loss,
+                         config, resolved, x_scaler, y_scaler, args.val_fold,
+                         residual_weight or energy_score_weight, penalty_type,
+                         epochs_without_improvement=epochs_without_improvement)
+
+        if epochs_without_improvement >= early_stop_patience:
+            print(f"early stopping at epoch {epoch} "
+                  f"({early_stop_patience} epochs without improvement)")
+            break
+
+    Path(done_path).touch()
     loss_plot_path = Path(args.output).with_name(Path(args.output).stem + "_loss_curve.png")
     fig = plotting.plot_loss_curve(train_loss_history, val_loss_history,
                                     train_eval_loss_history or None,
@@ -612,13 +631,18 @@ def train(args: argparse.Namespace) -> None:
 
 def save_checkpoint(path, model, optimizer, scheduler, epoch, val_loss,
                      config, resolved, x_scaler, y_scaler, val_fold,
-                     residual_penalty_weight=0.0, residual_penalty_type=None):
+                     residual_penalty_weight=0.0, residual_penalty_type=None,
+                     epochs_without_improvement=0):
     torch.save({
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict(),
         "epoch": epoch,
         "val_loss": val_loss,
+        # early-stop counter -- only meaningful in the "_latest.pt" checkpoint (written every
+        # epoch for resumption); the best-checkpoint always has this at 0 by construction. A
+        # resume that reads a pre-2026-09 checkpoint just gets 0 here via .get(..., 0).
+        "epochs_without_improvement": epochs_without_improvement,
         "model_config": config["model"],
         "resolved_config": resolved,          # truth/reco variable_transforms, value_type,
                                                  # fixed_mass, parton_ordering -- everything
